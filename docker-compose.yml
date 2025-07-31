@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  medcraft:
+    build: .
+    runtime: nvidia
+    volumes:
+      - ./dataset:/dataset
+      - ./datafolds:/app/datafolds
+    devices:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+    environment:
+      - PYTHONUNBUFFERED=1 
