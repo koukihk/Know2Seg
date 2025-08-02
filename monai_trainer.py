@@ -268,6 +268,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
     for idx, batch_data in enumerate(loader):
         data = batch_data['image'].cuda(args.rank)
         target = batch_data['label'].cuda(args.rank)
+
         tumor_texture_layer = batch_data['tumor_texture_layer'].cuda(args.rank)
         tumor_mask_layer = batch_data['tumor_mask_layer'].cuda(args.rank)
 
@@ -311,7 +312,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
         param.grad = None
     return run_loss.avg
 
-def train_epoch_with_mix(model, loader, optimizer, scaler, epoch, loss_func, args):
+def train_epoch_defaut(model, loader, optimizer, scaler, epoch, loss_func, args):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
@@ -327,22 +328,16 @@ def train_epoch_with_mix(model, loader, optimizer, scaler, epoch, loss_func, arg
         data = data.cuda(args.rank, non_blocking=True)
         target = target.cuda(args.rank, non_blocking=True)
 
-        # --- 添加 simple_mixup 逻辑 ---
-        if args.simple_mixup: # 添加一个新的命令行参数来控制
-            # 确保 image 和 label 都在列表中，以应用相同的空间变换
+        if args.simple_mixup: 
             mixed_input = mixup([data, target])
             data = mixed_input[0]
             target = mixed_input[1]
-        # --- 现有 mixup/cutmix 逻辑 ---
         elif args.mixup:
-            # 需要 mixup_loader 来获取随机批次
             data, target = tumor_weighted_mixup_3d(data, target, mixup_loader, alpha=args.mixup_alpha,
                                                   mixup_prob=args.mixup_prob, num_classes=args.num_classes)
         elif args.cutmix:
-            # 需要 mixup_loader 来获取随机批次
             data, target = tumor_aware_cutmix_3d(data, target, mixup_loader, beta=args.cutmix_beta,
                                                  cutmix_prob=args.cutmix_prob, num_classes=args.num_classes)
-        # -----------------------------
 
         optimizer.zero_grad(set_to_none=True)
 
@@ -379,7 +374,7 @@ def train_epoch_with_mix(model, loader, optimizer, scaler, epoch, loss_func, arg
 
     return run_loss.avg
 
-def train_epoch_with_validity(model, loader, optimizer, scaler, epoch, loss_func, args):
+def train_epoch_validity(model, loader, optimizer, scaler, epoch, loss_func, args):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
@@ -475,10 +470,8 @@ def val_epoch(model, loader, val_shape_dict, epoch, loss_func, args, model_infer
         for idx, batch_data in enumerate(loader):
             data = batch_data['image'].cuda(args.rank)
             target = batch_data['label'].cuda(args.rank)
-            # The following layers might not be available in the validation set.
-            # Handle cases where they are not present.
-            tumor_texture_layer = batch_data.get('tumor_texture_layer', torch.zeros_like(data)).cuda(args.rank)
-            tumor_mask_layer = batch_data.get('tumor_mask_layer', torch.zeros_like(target)).cuda(args.rank)
+            tumor_texture_layer = batch_data['tumor_texture_layer'].cuda(args.rank)
+            tumor_mask_layer = batch_data['tumor_mask_layer'].cuda(args.rank)
 
             with autocast(enabled=args.amp):
                 if model_inferer is not None:
@@ -487,10 +480,16 @@ def val_epoch(model, loader, val_shape_dict, epoch, loss_func, args, model_infer
                 else:
                     logits = model(data)
 
-            loss, _, _, _ = loss_func(logits, data, target, tumor_texture_layer, tumor_mask_layer)
+            if args.layer_decomposition:
+                loss, _, _, _ = loss_func(logits, data, target, tumor_texture_layer, tumor_mask_layer)
+                # In layer decomposition mode, segmentation is on channels 2:5
+                predicted_tumor_mask = logits[:, 2:5, :, :, :]
+            else:
+                loss = loss_func(logits, target)
+                # In standard mode, segmentation is on all output channels
+                predicted_tumor_mask = logits
 
             # Segmentation evaluation
-            predicted_tumor_mask = logits[:, 2:5, :, :, :]
             predicted_tumor_mask = torch.softmax(predicted_tumor_mask, 1).cpu().numpy()
             predicted_tumor_mask = np.argmax(predicted_tumor_mask, axis=1).astype(np.uint8)
             target = target.cpu().numpy()[:, 0, :, :, :]
@@ -590,8 +589,13 @@ def run_training(model,
         print(args.rank, time.ctime(), 'Epoch:', epoch)
 
         epoch_time = time.time()
-        train_loss = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, loss_func=loss_func,
-                                 args=args)
+        if args.layer_decomposition:
+            train_loss = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, loss_func=loss_func,
+                                     args=args)
+        else:
+            # Keep original behavior when layer decomposition is off
+            train_loss = train_epoch_defaut(model, train_loader, optimizer, scaler=scaler, epoch=epoch, loss_func=loss_func,
+                                     args=args)
 
         if args.rank == 0:
             print('Final training  {}/{}'.format(epoch, args.max_epochs - 1), 'loss: {:.4f}'.format(train_loss),

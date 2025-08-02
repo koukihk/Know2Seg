@@ -23,7 +23,7 @@ from tumor_analyzer import EllipsoidFitter
 warnings.filterwarnings("ignore")
 
 ## Online Tumor Generation
-from TumorGenerated import TumorGenerated, TumorFilter, AddValidKeyd
+from TumorGenerated import TumorGenerated, TumorFilter, AddValidKeyd, AddMissingKeysd
 from tumor_saver import TumorSaver
 
 import argparse
@@ -263,6 +263,7 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
             transforms.Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0),
                                 mode=("bilinear", "nearest")),
             TumorGenerated(keys=["image", "label"], prob=0.9, ellipsoid_model=ellipsoid_model),
+            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
         ]
         if args.save_syn_data:
             train_transform_list.append(SaveSyntheticallyGeneratedData(folder='syn_run'))
@@ -275,10 +276,10 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
                 keys=["image"], a_min=-21, a_max=189,
                 b_min=0.0, b_max=1.0, clip=True,
             ),
-            transforms.SpatialPadd(keys=["image", "label"], mode=["minimum", "constant"],
+            transforms.SpatialPadd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], mode=["minimum", "constant", "constant", "constant"],
                                    spatial_size=[96, 96, 96]),
             transforms.RandCropByPosNegLabeld(
-                keys=["image", "label"],
+                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
                 label_key="label",
                 spatial_size=(96, 96, 96),
                 pos=1,
@@ -287,13 +288,13 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
                 image_key="image",
                 image_threshold=0,
             ),
-            transforms.RandFlipd(keys=["image", "label"], prob=0.2, spatial_axis=0),
-            transforms.RandFlipd(keys=["image", "label"], prob=0.2, spatial_axis=1),
-            transforms.RandFlipd(keys=["image", "label"], prob=0.2, spatial_axis=2),
-            transforms.RandRotate90d(keys=["image", "label"], prob=0.2, max_k=3),
+            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, spatial_axis=0),
+            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, spatial_axis=1),
+            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, spatial_axis=2),
+            transforms.RandRotate90d(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, max_k=3),
             transforms.RandScaleIntensityd(keys="image", factors=0.1, prob=0.15),
             transforms.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.15),
-            transforms.ToTensord(keys=["image", "label"]),
+            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
         ])
         train_transform = transforms.Compose(train_transform_list)
 
