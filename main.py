@@ -15,7 +15,7 @@ from monai.inferers import sliding_window_inference
 from monai.losses import DiceCELoss
 # from monai.transforms import AsDiscrete
 
-from monai_trainer import AMDistributedSampler, run_training
+from monai_trainer import AMDistributedSampler, run_training, LayerDecompositionLoss
 from networks.swin3d_unetrv2 import SwinUNETR as SwinUNETR_v2
 from optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
 from tumor_analyzer import EllipsoidFitter
@@ -118,7 +118,7 @@ parser.add_argument('--mlp_dim', default=3072, type=int)
 parser.add_argument('--hidden_size', default=768, type=int)
 # parser.add_argument('--feature_size', default=12, type=int)
 parser.add_argument('--in_channels', default=1, type=int)
-parser.add_argument('--out_channels', default=3, type=int)
+parser.add_argument('--out_channels', default=5, type=int)
 parser.add_argument('--num_classes', default=3, type=int)
 parser.add_argument('--res_block', action='store_true')
 parser.add_argument('--conv_block', action='store_true')
@@ -145,6 +145,7 @@ parser.add_argument('--json_dir', default=None, type=str)
 parser.add_argument('--cache_num', default=500, type=int)
 
 parser.add_argument('--use_pretrained', action='store_true')
+parser.add_argument('--layer_decomposition', action='store_true', help='Enable layer decomposition training (5 output channels)')
 
 
 def optuna_objective(trial, args):
@@ -345,6 +346,11 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
 
 def main():
     args = parser.parse_args()
+    # set dynamic output channels according to layer decomposition flag
+    if args.layer_decomposition:
+        args.out_channels = 5
+    else:
+        args.out_channels = 3
     args.amp = not args.noamp
 
     if args.randaugment_n > 0:
@@ -403,7 +409,7 @@ def load_filter(args):
         model = UNet(
             spatial_dims=3,
             in_channels=1,
-            out_channels=3,
+            out_channels=args.out_channels,
             channels=(16, 32, 64, 128, 256),
             strides=(2, 2, 2, 2),
             num_res_units=2,
@@ -474,7 +480,7 @@ def main_worker(gpu, args):
         model = UNet(
             spatial_dims=3,
             in_channels=1,
-            out_channels=3,
+            out_channels=args.out_channels,
             channels=(16, 32, 64, 128, 256),
             strides=(2, 2, 2, 2),
             num_res_units=2,
@@ -490,7 +496,7 @@ def main_worker(gpu, args):
             feature_size = 48
 
         model = SwinUNETR_v2(in_channels=1,
-                             out_channels=3,
+                             out_channels=args.out_channels,
                              img_size=(96, 96, 96),
                              feature_size=feature_size,
                              patch_size=2,
@@ -512,7 +518,7 @@ def main_worker(gpu, args):
         model = DynUNet(
             spatial_dims=3,
             in_channels=1,
-            out_channels=3,
+            out_channels=args.out_channels,
             kernel_size=kernels,
             strides=strides,
             upsample_kernel_size=strides[1:],
@@ -540,8 +546,12 @@ def main_worker(gpu, args):
         return dice + kl_div
 
     # dice_loss = DiceCELoss(to_onehot_y=False, softmax=True, squared_pred=True, smooth_nr=1e-6, smooth_dr=1e-6)
-    dice_loss = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
+    #dice_loss = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
     # dice_loss = soft_dice_ce_loss
+    if args.layer_decomposition:
+        dice_loss = LayerDecompositionLoss(lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=1.0)
+    else:
+        dice_loss = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
 
     # post_label = AsDiscrete(to_onehot=True, n_classes=args.num_classes)
     # post_pred = AsDiscrete(argmax=True, to_onehot=True, n_classes=args.num_classes)

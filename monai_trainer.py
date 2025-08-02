@@ -143,6 +143,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+import monai
 from torch.distributions import Beta
 from torch.cuda.amp import autocast
 
@@ -226,25 +227,58 @@ def tumor_aware_cutmix_3d(data, target, mixup_loader, beta=1.0, cutmix_prob=0.5,
         other_target_one_hot[:, :, d1:d1 + cut_d, h1:h1 + cut_h, w1:w1 + cut_w]
     return mixed_data, mixed_target
 
+class LayerDecompositionLoss(torch.nn.Module):
+    def __init__(self, lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=1.0):
+        super().__init__()
+        self.l1_loss = torch.nn.L1Loss()
+        self.dice_ce_loss = monai.losses.DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
+        self.lambda_recon_normal = lambda_recon_normal
+        self.lambda_recon_tumor = lambda_recon_tumor
+        self.lambda_seg = lambda_seg
+
+    def forward(self, outputs, image, label, tumor_texture_layer, tumor_mask_layer):
+        reconstructed_normal_liver = outputs[:, 0:1, :, :, :]
+        reconstructed_tumor = outputs[:, 1:2, :, :, :]
+        predicted_tumor_mask = outputs[:, 2:5, :, :, :]
+
+        # Normal Liver Reconstruction Loss
+        normal_liver_region = image * (1 - tumor_mask_layer)
+        loss_recon_normal = self.l1_loss(reconstructed_normal_liver, normal_liver_region)
+
+        # Tumor Reconstruction Loss
+        loss_recon_tumor = self.l1_loss(reconstructed_tumor, tumor_texture_layer)
+
+        # Segmentation Loss
+        loss_seg = self.dice_ce_loss(predicted_tumor_mask, label)
+
+        total_loss = (self.lambda_recon_normal * loss_recon_normal +
+                      self.lambda_recon_tumor * loss_recon_tumor +
+                      self.lambda_seg * loss_seg)
+
+        return total_loss, loss_recon_normal, loss_recon_tumor, loss_seg
+
 def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
+    run_loss_recon_normal = AverageMeter()
+    run_loss_recon_tumor = AverageMeter()
+    run_loss_seg = AverageMeter()
 
     for idx, batch_data in enumerate(loader):
-        if isinstance(batch_data, list):
-            data, target = batch_data
-        else:
-            data, target = batch_data["image"], batch_data["label"]
+        data = batch_data['image'].cuda(args.rank)
+        target = batch_data['label'].cuda(args.rank)
+        tumor_texture_layer = batch_data['tumor_texture_layer'].cuda(args.rank)
+        tumor_mask_layer = batch_data['tumor_mask_layer'].cuda(args.rank)
 
-        data = data.cuda(args.rank, non_blocking=True)
-        target = target.cuda(args.rank, non_blocking=True)
-
-        optimizer.zero_grad(set_to_none=True)
+        for param in model.parameters():
+            param.grad = None
 
         with autocast(enabled=args.amp):
             logits = model(data)
-            loss = loss_func(logits, target)
+            loss, loss_recon_normal, loss_recon_tumor, loss_seg = loss_func(
+                logits, data, target, tumor_texture_layer, tumor_mask_layer
+            )
 
         if args.amp:
             scaler.scale(loss).backward()
@@ -255,24 +289,26 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             optimizer.step()
 
         if args.distributed:
-            loss_list = distributed_all_gather(
-                [loss],
-                out_numpy=True,
-                is_valid=idx < loader.sampler.valid_length
-            )
-            loss_val = np.mean(np.mean(np.stack(loss_list, axis=0), axis=0), axis=0)
-            run_loss.update(loss_val, n=args.batch_size * args.world_size)
+            loss_list = distributed_all_gather([loss], out_numpy=True, is_valid=idx < loader.sampler.valid_length)
+            run_loss.update(np.mean(np.mean(np.stack(loss_list, axis=0), axis=0)), n=args.batch_size * args.world_size)
+            # Also gather other losses if needed for logging
         else:
             run_loss.update(loss.item(), n=args.batch_size)
+            run_loss_recon_normal.update(loss_recon_normal.item(), n=args.batch_size)
+            run_loss_recon_tumor.update(loss_recon_tumor.item(), n=args.batch_size)
+            run_loss_seg.update(loss_seg.item(), n=args.batch_size)
 
         if args.rank == 0 and idx % 10 == 0:
-            elapsed = time.time() - start_time
             print(
                 f"Epoch {epoch}/{args.max_epochs} {idx}/{len(loader)} "
-                f"loss: {run_loss.avg:.4f} time {elapsed:.2f}s"
+                f"loss: {run_loss.avg:.4f} "
+                f"(recon_nl: {run_loss_recon_normal.avg:.4f}, recon_t: {run_loss_recon_tumor.avg:.4f}, seg: {run_loss_seg.avg:.4f}) "
+                f"time {time.time() - start_time:.2f}s"
             )
         start_time = time.time()
 
+    for param in model.parameters():
+        param.grad = None
     return run_loss.avg
 
 def train_epoch_with_mix(model, loader, optimizer, scaler, epoch, loss_func, args):
@@ -342,7 +378,6 @@ def train_epoch_with_mix(model, loader, optimizer, scaler, epoch, loss_func, arg
         start_time = time.time()
 
     return run_loss.avg
-
 
 def train_epoch_with_validity(model, loader, optimizer, scaler, epoch, loss_func, args):
     model.train()
@@ -437,36 +472,33 @@ def val_epoch(model, loader, val_shape_dict, epoch, loss_func, args, model_infer
     run_acc = AverageMeter()
 
     with torch.no_grad():
-
         for idx, batch_data in enumerate(loader):
-
-            if isinstance(batch_data, list):
-                data, target = batch_data
-            else:
-                data, target = batch_data['image'], batch_data['label']
-
-            data, target = data.cuda(args.rank), target.cuda(args.rank)
-
-            # target_one_hot = F.one_hot(target.squeeze(1).long(), num_classes=args.num_classes).permute(0, 4, 1, 2, 3).float()
+            data = batch_data['image'].cuda(args.rank)
+            target = batch_data['label'].cuda(args.rank)
+            # The following layers might not be available in the validation set.
+            # Handle cases where they are not present.
+            tumor_texture_layer = batch_data.get('tumor_texture_layer', torch.zeros_like(data)).cuda(args.rank)
+            tumor_mask_layer = batch_data.get('tumor_mask_layer', torch.zeros_like(target)).cuda(args.rank)
 
             with autocast(enabled=args.amp):
                 if model_inferer is not None:
                     torch.cuda.empty_cache()
-                    logits = model_inferer(data)  # another inferer (e.g. sliding window)
+                    logits = model_inferer(data)
                 else:
                     logits = model(data)
 
-            loss = loss_func(logits, target)
-            # loss = loss_func(logits, target_one_hot)
+            loss, _, _, _ = loss_func(logits, data, target, tumor_texture_layer, tumor_mask_layer)
 
-            logits = torch.softmax(logits, 1).cpu().numpy()
-            logits = np.argmax(logits, axis=1).astype(np.uint8)
+            # Segmentation evaluation
+            predicted_tumor_mask = logits[:, 2:5, :, :, :]
+            predicted_tumor_mask = torch.softmax(predicted_tumor_mask, 1).cpu().numpy()
+            predicted_tumor_mask = np.argmax(predicted_tumor_mask, axis=1).astype(np.uint8)
             target = target.cpu().numpy()[:, 0, :, :, :]
 
             name = batch_data["image_meta_dict"]['filename_or_obj'][0].split('/')[-1]
             val_shape = val_shape_dict[name]
 
-            pred = resample(logits[0], val_shape)
+            pred = resample(predicted_tumor_mask[0], val_shape)
             y = resample(target[0], val_shape)
 
             dice_list_sub = []
@@ -484,27 +516,17 @@ def val_epoch(model, loader, val_shape_dict, epoch, loss_func, args, model_infer
                     class_metric = [s[i] for s in gather_list_sub]
                     classes_metriclist.append(class_metric)
                 avg_classes = np.mean(classes_metriclist, 1)
-                ave_all = np.mean(avg_classes)
-                #                 if not loss.is_cuda:
                 loss = loss.cuda(args.rank)
-
                 loss_list = distributed_all_gather([loss], out_numpy=True, is_valid=idx < loader.sampler.valid_length)
-
-                run_loss.update(np.mean(np.mean(np.stack(loss_list, axis=0), axis=0)),
-                                n=args.batch_size * args.world_size)
-
+                run_loss.update(np.mean(np.mean(np.stack(loss_list, axis=0), axis=0)), n=args.batch_size * args.world_size)
                 run_acc.update(avg_classes, n=1)
-
-            # If you do not use distributed, this program will raise error.
             else:
                 avg_classes = np.array(dice_list_sub)
                 run_acc.update(avg_classes, n=args.batch_size)
                 run_loss.update(loss.item(), n=args.batch_size)
 
-            # print(args.rank, 'end1')
             if args.rank == 0:
-                print('Batch mean: Liver: {}, Tumor: {}, all:{}'.format(avg_classes[0], avg_classes[1],
-                                                                        np.mean(avg_classes)))
+                print('Batch mean: Liver: {}, Tumor: {}, all:{}'.format(avg_classes[0], avg_classes[1], np.mean(avg_classes)))
                 print('Val {}/{} {}/{}'.format(epoch, args.max_epochs, idx, len(loader)),
                       'loss: {:.4f}'.format(run_loss.avg),
                       'acc', run_acc.avg,
@@ -568,7 +590,7 @@ def run_training(model,
         print(args.rank, time.ctime(), 'Epoch:', epoch)
 
         epoch_time = time.time()
-        train_loss = train_epoch_with_mix(model, train_loader, optimizer, scaler=scaler, epoch=epoch, loss_func=loss_func,
+        train_loss = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, loss_func=loss_func,
                                  args=args)
 
         if args.rank == 0:

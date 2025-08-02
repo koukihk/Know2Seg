@@ -506,13 +506,13 @@ def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=Fa
 
     # blur the boundary
     geo_blur = gaussian_filter(geo_mask*1.0, sigma)
-    abnormally = (volume_scan - texture * geo_blur * difference) * mask_scan
-    # abnormally = (volume_scan - texture * geo_mask * difference) * mask_scan
+    tumor_texture_layer = texture * geo_blur * difference * mask_scan
+    abnormally = (volume_scan - tumor_texture_layer) * mask_scan
     
     abnormally_full = volume_scan * (1 - mask_scan) + abnormally
     abnormally_mask = mask_scan + geo_mask
 
-    return abnormally_full, abnormally_mask
+    return abnormally_full, abnormally_mask, tumor_texture_layer, geo_mask
 
 def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False):
     geo_mask = get_fixed_geo(mask_scan, tumor_type)
@@ -539,7 +539,8 @@ def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advance
             death_cells[eroded_mask] = 1
     
     geo_blur = gaussian_filter(geo_mask*1.0, sigma)
-    abnormally = (volume_scan - texture * geo_blur * difference) * mask_scan
+    tumor_texture_layer = texture * geo_blur * difference * mask_scan
+    abnormally = (volume_scan - tumor_texture_layer) * mask_scan
     
     conflict_vessel = vessel_condition & (geo_blur > 0.2)
     conflict_high = high_tissue_condition & (geo_blur > 0.2)
@@ -558,7 +559,7 @@ def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advance
     abnormally_full = volume_scan * (1 - mask_scan) + abnormally
     abnormally_mask = mask_scan + geo_mask
     
-    return abnormally_full, abnormally_mask
+    return abnormally_full, abnormally_mask, tumor_texture_layer, geo_mask
 
 
 def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur, ellipsoid_model=None, use_enhanced_method=False):
@@ -586,13 +587,20 @@ def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_bl
     cut_texture = texture[start_x:start_x + x_length, start_y:start_y + y_length, start_z:start_z + z_length]
 
     if use_enhanced_method:
-        liver_volume, liver_mask = get_tumor_enhanced(liver_volume, liver_mask, tumor_type, cut_texture,
+        liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer = get_tumor_enhanced(liver_volume, liver_mask, tumor_type, cut_texture,
                                              edge_advanced_blur)
     else:
-        liver_volume, liver_mask = get_tumor(liver_volume, liver_mask, tumor_type, cut_texture,
+        liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer = get_tumor(liver_volume, liver_mask, tumor_type, cut_texture,
                                              edge_advanced_blur)
+
+    # Restore to full size
+    full_tumor_texture_layer = np.zeros_like(volume_scan)
+    full_tumor_mask_layer = np.zeros_like(mask_scan)
+
+    full_tumor_texture_layer[x_start:x_end, y_start:y_end, z_start:z_end] = tumor_texture_layer
+    full_tumor_mask_layer[x_start:x_end, y_start:y_end, z_start:z_end] = tumor_mask_layer
 
     volume_scan[x_start:x_end, y_start:y_end, z_start:z_end] = liver_volume
     mask_scan[x_start:x_end, y_start:y_end, z_start:z_end] = liver_mask
 
-    return volume_scan, mask_scan
+    return volume_scan, mask_scan, full_tumor_texture_layer, full_tumor_mask_layer

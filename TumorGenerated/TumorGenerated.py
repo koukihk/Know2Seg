@@ -49,8 +49,14 @@ class TumorGenerated(RandomizableTransform, MapTransform):
         if self._do_transform and (np.max(d['label']) <= 1):
             tumor_type = np.random.choice(self.tumor_types, p=self.tumor_prob.ravel())
             texture = random.choice(self.textures)
-            d['image'][0], d['label'][0] = SynthesisTumor(d['image'][0], d['label'][0], tumor_type, texture,
-                                                          self.edge_advanced_blur, self.ellipsoid_model,
-                                                          self.use_enhanced_method)
+            image, label, tumor_texture_layer, tumor_mask_layer = SynthesisTumor(
+                d['image'][0], d['label'][0], tumor_type, texture,
+                self.edge_advanced_blur, self.ellipsoid_model,
+                self.use_enhanced_method
+            )
+            d['image'][0] = image
+            d['label'][0] = label
+            d['tumor_texture_layer'] = tumor_texture_layer[np.newaxis, ...]
+            d['tumor_mask_layer'] = tumor_mask_layer[np.newaxis, ...]
 
         return d

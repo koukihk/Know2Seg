@@ -301,7 +301,6 @@ def main():
 
     rows = []
     
-    # 用于肿瘤大小分析的统计变量
     tumor_size_stats = {'0-5mm': {'tp': 0, 'fn': 0, 'fp': 0}, 
                          '5-10mm': {'tp': 0, 'fn': 0, 'fp': 0}, 
                          '>10mm': {'tp': 0, 'fn': 0, 'fp': 0}}
@@ -361,10 +360,8 @@ def main():
                                                                        current_liver_rhd, current_tumor_rhd),
                   'time {:.2f}s'.format(time.time() - start_time))
 
-            # 分析不同大小肿瘤的检测效果
             if args.analyze_tumor_size:
                 size_stats = analyze_tumor_by_size(val_outputs[2, ...], val_labels[2, ...], spacing_mm)
-                # 将该样本的统计结果累加到全局统计
                 for size_bin in size_stats:
                     for metric in size_stats[size_bin]:
                         tumor_size_stats[size_bin][metric] += size_stats[size_bin][metric]
