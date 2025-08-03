@@ -290,9 +290,15 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             optimizer.step()
 
         if args.distributed:
-            loss_list = distributed_all_gather([loss], out_numpy=True, is_valid=idx < loader.sampler.valid_length)
-            run_loss.update(np.mean(np.mean(np.stack(loss_list, axis=0), axis=0)), n=args.batch_size * args.world_size)
-            # Also gather other losses if needed for logging
+            loss_list, loss_recon_normal_list, loss_recon_tumor_list, loss_seg_list = distributed_all_gather(
+                [loss, loss_recon_normal, loss_recon_tumor, loss_seg], 
+                out_numpy=True, 
+                is_valid=idx < loader.sampler.valid_length
+            )
+            run_loss.update(np.mean(np.stack(loss_list, axis=0)), n=args.batch_size * args.world_size)
+            run_loss_recon_normal.update(np.mean(np.stack(loss_recon_normal_list, axis=0)), n=args.batch_size * args.world_size)
+            run_loss_recon_tumor.update(np.mean(np.stack(loss_recon_tumor_list, axis=0)), n=args.batch_size * args.world_size)
+            run_loss_seg.update(np.mean(np.stack(loss_seg_list, axis=0)), n=args.batch_size * args.world_size)
         else:
             run_loss.update(loss.item(), n=args.batch_size)
             run_loss_recon_normal.update(loss_recon_normal.item(), n=args.batch_size)
