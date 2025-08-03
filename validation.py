@@ -10,6 +10,7 @@ import nibabel as nib
 import numpy as np
 import torch
 from monai import transforms, data
+from TumorGenerated import AddMissingKeysd
 from monai.data import load_decathlon_datalist
 from monai.inferers import sliding_window_inference
 from monai.transforms import AsDiscreted, Compose, Invertd
@@ -106,20 +107,13 @@ def cal_dice_nsd(pred, truth, spacing_mm=(1, 1, 1), tolerance=2, percent=95):
 
 
 def analyze_tumor_by_size(pred_tumor, label_tumor, spacing_mm):
-    """
-    分析不同大小肿瘤的检测效果
-    返回每个肿瘤大小类别的TP、FN、FP数量
-    """
-    # 初始化不同大小肿瘤的统计数据
     size_bins = {'0-5mm': {'tp': 0, 'fn': 0, 'fp': 0}, 
                  '5-10mm': {'tp': 0, 'fn': 0, 'fp': 0}, 
                  '>10mm': {'tp': 0, 'fn': 0, 'fp': 0}}
     
-    # 确保输入数据为布尔类型
     pred_tumor = pred_tumor.astype(bool)
     label_tumor = label_tumor.astype(bool)
     
-    # 处理真实标签中的肿瘤
     if np.sum(label_tumor) > 0:
         label_cc, label_num = ndimage.label(label_tumor)
         for i in range(1, label_num + 1):
@@ -129,15 +123,12 @@ def analyze_tumor_by_size(pred_tumor, label_tumor, spacing_mm):
             if tumor_size < 8:  # 忽略太小的肿瘤
                 continue
                 
-            # 计算肿瘤半径（mm）
             tumor_volume_mm = pixel2voxel(tumor_size, spacing_mm)
             tumor_radius_mm = voxel2R(tumor_volume_mm)
             
-            # 检查此肿瘤是否被正确检测（与预测结果有足够重叠）
             overlap = np.sum(np.logical_and(tumor_region, pred_tumor)) / tumor_size
-            detected = overlap > 0.1  # 假设10%的重叠算作检测到
+            detected = overlap > 0.1 
             
-            # 根据肿瘤半径分类
             if tumor_radius_mm <= 5:
                 size_bins['0-5mm']['tp' if detected else 'fn'] += 1
             elif tumor_radius_mm <= 10:
@@ -145,7 +136,6 @@ def analyze_tumor_by_size(pred_tumor, label_tumor, spacing_mm):
             else:
                 size_bins['>10mm']['tp' if detected else 'fn'] += 1
     
-    # 处理预测结果中的假阳性肿瘤
     if np.sum(pred_tumor) > 0:
         pred_cc, pred_num = ndimage.label(pred_tumor)
         for i in range(1, pred_num + 1):
@@ -154,14 +144,11 @@ def analyze_tumor_by_size(pred_tumor, label_tumor, spacing_mm):
             if pred_size < 8:
                 continue
                 
-            # 计算预测肿瘤的重叠
             overlap = np.sum(np.logical_and(pred_region, label_tumor)) / pred_size
-            if overlap <= 0.1:  # 假阳性
-                # 计算肿瘤半径
+            if overlap <= 0.1:  # 假阳
                 pred_volume_mm = pixel2voxel(pred_size, spacing_mm)
                 pred_radius_mm = voxel2R(pred_volume_mm)
                 
-                # 根据半径分类
                 if pred_radius_mm <= 5:
                     size_bins['0-5mm']['fp'] += 1
                 elif pred_radius_mm <= 10:
@@ -236,12 +223,21 @@ def _get_loader(args):
     val_org_transform = transforms.Compose(
         [
             transforms.LoadImaged(keys=["image", "label"]),
-            transforms.AddChanneld(keys=["image", "label"]),
-            transforms.Orientationd(keys=["image"], axcodes="RAS"),
-            transforms.Spacingd(keys=["image"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear")),
+            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
+            transforms.AddChanneld(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
+            transforms.Orientationd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], axcodes="RAS"),
+            transforms.Spacingd(
+                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
+                pixdim=(1.0, 1.0, 1.0),
+                mode=("bilinear", "nearest", "bilinear", "nearest")
+            ),
             transforms.ScaleIntensityRanged(keys=["image"], a_min=-21, a_max=189, b_min=0.0, b_max=1.0, clip=True),
-            transforms.SpatialPadd(keys=["image"], mode="minimum", spatial_size=[96, 96, 96]),
-            transforms.ToTensord(keys=["image", "label"]),
+            transforms.SpatialPadd(
+                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
+                mode=["minimum", "constant", "constant", "constant"],
+                spatial_size=[96, 96, 96]
+            ),
+            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
         ]
     )
     val_files = load_decathlon_datalist(datalist_json, True, "validation", base_dir=val_data_dir)
