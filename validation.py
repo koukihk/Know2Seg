@@ -223,20 +223,20 @@ def _get_loader(args):
     val_org_transform = transforms.Compose(
         [
             transforms.LoadImaged(keys=["image", "label"]),
-            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
-            transforms.AddChanneld(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
-            transforms.Orientationd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], axcodes="RAS"),
+            transforms.AddChanneld(keys=["image", "label"]),
+            transforms.Orientationd(keys=["image", "label"], axcodes="RAS"),
             transforms.Spacingd(
-                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
+                keys=["image", "label"],
                 pixdim=(1.0, 1.0, 1.0),
-                mode=("bilinear", "nearest", "bilinear", "nearest")
+                mode=("bilinear", "nearest")
             ),
             transforms.ScaleIntensityRanged(keys=["image"], a_min=-21, a_max=189, b_min=0.0, b_max=1.0, clip=True),
             transforms.SpatialPadd(
-                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
-                mode=["minimum", "constant", "constant", "constant"],
+                keys=["image", "label"],
+                mode=["minimum", "constant"],
                 spatial_size=[96, 96, 96]
             ),
+            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
             transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
         ]
     )
@@ -409,7 +409,6 @@ def main():
                 ["tumor rhd", np.mean(tumor_rhd)]
             ]
             
-        # 输出每个大小肿瘤的检测效果
         if args.analyze_tumor_size:
             print("\n=== Tumor Size Analysis ===")
             for size_bin in tumor_size_stats:
@@ -417,7 +416,6 @@ def main():
                 fn = tumor_size_stats[size_bin]['fn']
                 fp = tumor_size_stats[size_bin]['fp']
                 
-                # 计算指标
                 sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
                 precision = tp / (tp + fp) if (tp + fp) > 0 else 0
                 f1 = 2 * sensitivity * precision / (sensitivity + precision) if (sensitivity + precision) > 0 else 0
@@ -428,7 +426,6 @@ def main():
                 print(f"  Precision: {to_percentage(precision)}%")
                 print(f"  F1 Score: {to_decimal(f1)}")
                 
-                # 添加到结果列表
                 results.append([f"tumor_{size_bin}_tp", tp])
                 results.append([f"tumor_{size_bin}_fn", fn])
                 results.append([f"tumor_{size_bin}_fp", fp])
@@ -436,7 +433,6 @@ def main():
                 results.append([f"tumor_{size_bin}_precision", precision])
                 results.append([f"tumor_{size_bin}_f1", f1])
                 
-            # 添加表头信息
             header.extend([
                 'tumor_0-5mm_tp', 'tumor_0-5mm_fn', 'tumor_0-5mm_fp', 
                 'tumor_0-5mm_sensitivity', 'tumor_0-5mm_precision', 'tumor_0-5mm_f1',

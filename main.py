@@ -333,20 +333,20 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
     val_transform = transforms.Compose(
         [
             transforms.LoadImaged(keys=["image", "label"]),
-            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
-            transforms.AddChanneld(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
-            transforms.Orientationd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], axcodes="RAS"),
+            transforms.AddChanneld(keys=["image", "label"]),
+            transforms.Orientationd(keys=["image", "label"], axcodes="RAS"),
             transforms.Spacingd(
-                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
+                keys=["image", "label"],
                 pixdim=(1.0, 1.0, 1.0),
-                mode=("bilinear", "nearest", "bilinear", "nearest")
+                mode=("bilinear", "nearest")
             ),
             transforms.ScaleIntensityRanged(keys=["image"], a_min=-21, a_max=189, b_min=0.0, b_max=1.0, clip=True),
             transforms.SpatialPadd(
-                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
-                mode=["minimum", "constant", "constant", "constant"],
+                keys=["image", "label"],
+                mode=["minimum", "constant"],
                 spatial_size=[96, 96, 96]
             ),
+            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
             transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
         ]
     )
