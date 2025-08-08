@@ -42,6 +42,7 @@ parser.add_argument('--num_classes', default=3, type=int)
 parser.add_argument('--model', default='unet', type=str)
 parser.add_argument('--swin_type', default='tiny', type=str)
 parser.add_argument('--analyze_tumor_size', action='store_true', help='Analyze tumor by size')
+parser.add_argument('--layer_decomposition', action='store_true', help='Enable layer decomposition (5 output channels)')
 
 
 def to_percentage(value):
@@ -53,12 +54,10 @@ def to_decimal(value):
 
 
 def voxel2R(A):
-    """将体素体积转换为球体半径（单位：mm）"""
     return (np.array(A)/4*3/np.pi)**(1/3)
 
 
 def pixel2voxel(A, res):
-    """将像素数量转换为体积（单位：mm³）"""
     return np.array(A)*(res[0]*res[1]*res[2])
 
 
@@ -181,10 +180,11 @@ def _get_model(args):
 
     elif args.model == 'unet':
         from monai.networks.nets import UNet
+        out_channels = 5 if args.layer_decomposition else 3
         model = UNet(
             spatial_dims=3,
             in_channels=1,
-            out_channels=3,
+            out_channels=out_channels,
             channels=(16, 32, 64, 128, 256),
             strides=(2, 2, 2, 2),
             num_res_units=2,
@@ -257,8 +257,8 @@ def _get_loader(args):
             to_tensor=True,
         ),
         # AsDiscreted(keys="pred", argmax=True, to_onehot=3),
-        AsDiscreted(keys="pred", argmax=True, to_onehot=3),
-        AsDiscreted(keys="label", to_onehot=3),
+        AsDiscreted(keys="pred", argmax=True, to_onehot=args.num_classes),
+        AsDiscreted(keys="label", to_onehot=args.num_classes),
         # SaveImaged(keys="pred", meta_keys="pred_meta_dict", output_dir=output_dir, output_postfix="seg",
         # resample=False,output_dtype=np.uint8,separate_folder=False),
     ])
@@ -311,7 +311,12 @@ def main():
             pixdim = val_data['label_meta_dict']['pixdim'].cpu().numpy()
             spacing_mm = tuple(pixdim[0][1:4])
 
-            val_data["pred"] = model_inferer(val_inputs)
+            # 进行推理并根据模式选择输出通道
+            if args.layer_decomposition:
+                val_prediction = model_inferer(val_inputs)[:, 2:5, ...]
+            else:
+                val_prediction = model_inferer(val_inputs)
+            val_data["pred"] = val_prediction
             val_data = [post_transforms(i) for i in data.decollate_batch(val_data)]
             # val_outputs, val_labels = from_engine(["pred", "label"])(val_data)
             val_outputs, val_labels = val_data[0]['pred'], val_data[0]['label']
