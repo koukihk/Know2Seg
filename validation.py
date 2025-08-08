@@ -90,6 +90,10 @@ def denoise_pred(pred: np.ndarray):
 
 
 def cal_dice(pred, true):
+    if pred.shape != true.shape:
+        common_shape = tuple(min(p, t) for p, t in zip(pred.shape, true.shape))
+        pred = pred[tuple(slice(0, s) for s in common_shape)]
+        true = true[tuple(slice(0, s) for s in common_shape)]
     intersection = np.sum(pred[true == 1]) * 2.0
     dice = intersection / (np.sum(pred) + np.sum(true))
     return dice
@@ -311,7 +315,6 @@ def main():
             pixdim = val_data['label_meta_dict']['pixdim'].cpu().numpy()
             spacing_mm = tuple(pixdim[0][1:4])
 
-            # 进行推理并根据模式选择输出通道
             if args.layer_decomposition:
                 val_prediction = model_inferer(val_inputs)[:, 2:5, ...]
             else:
