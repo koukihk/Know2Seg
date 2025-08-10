@@ -260,6 +260,16 @@ def _get_loader(args):
             nearest_interp=False,
             to_tensor=True,
         ),
+        Invertd(
+            keys="label",
+            transform=val_org_transform,
+            orig_keys="image",
+            meta_keys="label_meta_dict",
+            orig_meta_keys="image_meta_dict",
+            meta_key_postfix="meta_dict",
+            nearest_interp=True,
+            to_tensor=True,
+        ),
         # AsDiscreted(keys="pred", argmax=True, to_onehot=3),
         AsDiscreted(keys="pred", argmax=True, to_onehot=args.num_classes),
         AsDiscreted(keys="label", to_onehot=args.num_classes),
@@ -329,6 +339,12 @@ def main():
 
             # denoise the ouputs
             val_outputs = denoise_pred(val_outputs)
+
+            # align shapes defensively before metrics
+            if val_outputs.shape[1:] != val_labels.shape[1:]:
+                min_shape = tuple(min(a, b) for a, b in zip(val_outputs.shape[1:], val_labels.shape[1:]))
+                val_outputs = val_outputs[:, :min_shape[0], :min_shape[1], :min_shape[2]]
+                val_labels = val_labels[:, :min_shape[0], :min_shape[1], :min_shape[2]]
 
             current_liver_dice, current_liver_nsd, current_liver_sd, current_liver_rhd = cal_dice_nsd(
                 val_outputs[1, ...], val_labels[1, ...], spacing_mm=spacing_mm)
