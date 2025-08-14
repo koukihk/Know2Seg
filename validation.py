@@ -173,8 +173,9 @@ def _get_model(args):
         elif args.swin_type == 'base':
             feature_size = 48
 
+        out_channels = 5 if args.layer_decomposition else 3
         model = SwinUNETR_v2(in_channels=1,
-                             out_channels=3,
+                             out_channels=out_channels,
                              img_size=(96, 96, 96),
                              feature_size=feature_size,
                              patch_size=2,
@@ -240,8 +241,8 @@ def _get_loader(args):
                 mode=["minimum", "constant"],
                 spatial_size=[96, 96, 96]
             ),
-            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
-            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
+            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer", "alpha"]),
+            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"]),
         ]
     )
     val_files = load_decathlon_datalist(datalist_json, True, "validation", base_dir=val_data_dir)

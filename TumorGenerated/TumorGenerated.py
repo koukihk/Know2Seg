@@ -23,7 +23,7 @@ class TumorGenerated(RandomizableTransform, MapTransform):
         random.seed(0)
         np.random.seed(0)
         self.ellipsoid_model = ellipsoid_model
-        self.edge_advanced_blur = False
+        self.edge_advanced_blur = True
         self.use_enhanced_method = use_enhanced_method
 
         self.tumor_types = ['tiny', 'small', 'medium', 'large', 'mix']
@@ -38,7 +38,7 @@ class TumorGenerated(RandomizableTransform, MapTransform):
         predefined_texture_shape = (420, 300, 320)
         for sigma_a in sigma_as:
             for sigma_b in sigma_bs:
-                texture = get_predefined_texture(predefined_texture_shape, sigma_a, sigma_b)
+                texture = get_predefined_texture_b(predefined_texture_shape, sigma_a, sigma_b)
                 self.textures.append(texture)
         print("All predefined texture have generated.")
 
@@ -49,7 +49,7 @@ class TumorGenerated(RandomizableTransform, MapTransform):
         if self._do_transform and (np.max(d['label']) <= 1):
             tumor_type = np.random.choice(self.tumor_types, p=self.tumor_prob.ravel())
             texture = random.choice(self.textures)
-            image, label, tumor_texture_layer, tumor_mask_layer = SynthesisTumor(
+            image, label, tumor_texture_layer, tumor_mask_layer, alpha = SynthesisTumor(
                 d['image'][0], d['label'][0], tumor_type, texture,
                 self.edge_advanced_blur, self.ellipsoid_model,
                 self.use_enhanced_method
@@ -58,5 +58,6 @@ class TumorGenerated(RandomizableTransform, MapTransform):
             d['label'][0] = label
             d['tumor_texture_layer'] = tumor_texture_layer[np.newaxis, ...]
             d['tumor_mask_layer'] = tumor_mask_layer[np.newaxis, ...]
+            d['alpha'] = alpha[np.newaxis, ...]
 
         return d

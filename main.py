@@ -263,7 +263,7 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
             transforms.Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0),
                                 mode=("bilinear", "nearest")),
             TumorGenerated(keys=["image", "label"], prob=0.9, ellipsoid_model=ellipsoid_model),
-            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
+            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer", "alpha"]),
         ]
         if args.save_syn_data:
             train_transform_list.append(SaveSyntheticallyGeneratedData(folder='syn_run'))
@@ -276,25 +276,26 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
                 keys=["image"], a_min=-21, a_max=189,
                 b_min=0.0, b_max=1.0, clip=True,
             ),
-            transforms.SpatialPadd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], mode=["minimum", "constant", "constant", "constant"],
+            transforms.SpatialPadd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"], mode=["minimum", "constant", "constant", "constant", "constant"],
                                    spatial_size=[96, 96, 96]),
             transforms.RandCropByPosNegLabeld(
-                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"],
+                keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"],
                 label_key="label",
+
                 spatial_size=(96, 96, 96),
-                pos=1,
+                pos=2,
                 neg=1,
                 num_samples=1,
                 image_key="image",
                 image_threshold=0,
             ),
-            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, spatial_axis=0),
-            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, spatial_axis=1),
-            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, spatial_axis=2),
-            transforms.RandRotate90d(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"], prob=0.2, max_k=3),
+            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"], prob=0.2, spatial_axis=0),
+            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"], prob=0.2, spatial_axis=1),
+            transforms.RandFlipd(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"], prob=0.2, spatial_axis=2),
+            transforms.RandRotate90d(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"], prob=0.2, max_k=3),
             transforms.RandScaleIntensityd(keys="image", factors=0.1, prob=0.15),
             transforms.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.15),
-            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
+            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"]),
         ])
         train_transform = transforms.Compose(train_transform_list)
 
@@ -346,8 +347,8 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
                 mode=["minimum", "constant"],
                 spatial_size=[96, 96, 96]
             ),
-            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer"]),
-            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer"]),
+            AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer", "alpha"]),
+            transforms.ToTensord(keys=["image", "label", "tumor_texture_layer", "tumor_mask_layer", "alpha"]),
         ]
     )
 
@@ -559,7 +560,15 @@ def main_worker(gpu, args):
     #dice_loss = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
     # dice_loss = soft_dice_ce_loss
     if args.layer_decomposition:
-        dice_loss = LayerDecompositionLoss(lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=1.0)
+        dice_loss = LayerDecompositionLoss(
+            lambda_recon_normal=0.3, 
+            lambda_recon_tumor=0.5, 
+            lambda_seg=2.0,
+            lambda_blend=0.8,      # L3 blended reconstruction weight
+            use_l3_blend=True,     # Enable L3 blend loss
+            stage_ii_mode=False,   # Disable Stage II initially
+            confidence_threshold=0.9
+        )
     else:
         dice_loss = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
 

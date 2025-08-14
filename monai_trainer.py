@@ -228,34 +228,66 @@ def tumor_aware_cutmix_3d(data, target, mixup_loader, beta=1.0, cutmix_prob=0.5,
     return mixed_data, mixed_target
 
 class LayerDecompositionLoss(torch.nn.Module):
-    def __init__(self, lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=1.0):
+    def __init__(self, lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=2.0, 
+                 lambda_blend=1.0, use_l3_blend=True, stage_ii_mode=False, 
+                 confidence_threshold=0.9):
         super().__init__()
         self.l1_loss = torch.nn.L1Loss()
         self.dice_ce_loss = monai.losses.DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
         self.lambda_recon_normal = lambda_recon_normal
         self.lambda_recon_tumor = lambda_recon_tumor
         self.lambda_seg = lambda_seg
+        self.lambda_blend = lambda_blend
+        self.use_l3_blend = use_l3_blend
+        self.stage_ii_mode = stage_ii_mode
+        self.confidence_threshold = confidence_threshold
 
-    def forward(self, outputs, image, label, tumor_texture_layer, tumor_mask_layer):
+    def forward(self, outputs, image, label, tumor_texture_layer, tumor_mask_layer, alpha=None):
         reconstructed_normal_liver = outputs[:, 0:1, :, :, :]
         reconstructed_tumor = outputs[:, 1:2, :, :, :]
         predicted_tumor_mask = outputs[:, 2:5, :, :, :]
 
-        # Normal Liver Reconstruction Loss
+        # L0: Normal Liver Reconstruction Loss
         normal_liver_region = image * (1 - tumor_mask_layer)
         loss_recon_normal = self.l1_loss(reconstructed_normal_liver, normal_liver_region)
 
-        # Tumor Reconstruction Loss
+        # L1: Tumor Reconstruction Loss
         loss_recon_tumor = self.l1_loss(reconstructed_tumor, tumor_texture_layer)
 
-        # Segmentation Loss
+        # L2: Segmentation Loss
         loss_seg = self.dice_ce_loss(predicted_tumor_mask, label)
+
+        # L3: Blended Reconstruction Loss (paper eq.)
+        loss_blend = 0.0
+        if self.use_l3_blend and alpha is not None:
+            # Generate alpha mixing parameter if not provided
+            if alpha is None:
+                alpha = torch.rand_like(tumor_mask_layer) * 0.8 + 0.1  # range [0.1, 0.9]
+            
+            # Blended reconstruction: xi = alpha * xni + (1-alpha) * xri
+            blended_recon = alpha * reconstructed_normal_liver + (1 - alpha) * reconstructed_tumor
+            loss_blend = self.l1_loss(blended_recon, image)
+
+        # Stage II: Pseudo-labeling for high-confidence predictions
+        if self.stage_ii_mode:
+            # Generate pseudo labels from high-confidence predictions
+            pred_probs = torch.softmax(predicted_tumor_mask, dim=1)
+            max_probs, pseudo_labels = torch.max(pred_probs, dim=1)
+            
+            # Only use high-confidence regions for pseudo-labeling
+            high_conf_mask = max_probs > self.confidence_threshold
+            if high_conf_mask.sum() > 0:
+                # L4: Pseudo-label consistency loss
+                pseudo_label_onehot = F.one_hot(pseudo_labels.long(), num_classes=predicted_tumor_mask.shape[1]).permute(0, 4, 1, 2, 3).float()
+                pseudo_loss = self.dice_ce_loss(predicted_tumor_mask, pseudo_label_onehot.unsqueeze(1))
+                loss_seg = 0.5 * loss_seg + 0.5 * pseudo_loss
 
         total_loss = (self.lambda_recon_normal * loss_recon_normal +
                       self.lambda_recon_tumor * loss_recon_tumor +
-                      self.lambda_seg * loss_seg)
+                      self.lambda_seg * loss_seg +
+                      self.lambda_blend * loss_blend)
 
-        return total_loss, loss_recon_normal, loss_recon_tumor, loss_seg
+        return total_loss, loss_recon_normal, loss_recon_tumor, loss_seg, loss_blend
 
 def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
     model.train()
@@ -264,6 +296,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
     run_loss_recon_normal = AverageMeter()
     run_loss_recon_tumor = AverageMeter()
     run_loss_seg = AverageMeter()
+    run_loss_blend = AverageMeter()
 
     for idx, batch_data in enumerate(loader):
         data = batch_data['image'].cuda(args.rank)
@@ -271,14 +304,15 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
 
         tumor_texture_layer = batch_data['tumor_texture_layer'].cuda(args.rank)
         tumor_mask_layer = batch_data['tumor_mask_layer'].cuda(args.rank)
+        alpha = batch_data['alpha'].cuda(args.rank)  # Use alpha from data batch
 
         for param in model.parameters():
             param.grad = None
 
         with autocast(enabled=args.amp):
             logits = model(data)
-            loss, loss_recon_normal, loss_recon_tumor, loss_seg = loss_func(
-                logits, data, target, tumor_texture_layer, tumor_mask_layer
+            loss, loss_recon_normal, loss_recon_tumor, loss_seg, loss_blend = loss_func(
+                logits, data, target, tumor_texture_layer, tumor_mask_layer, alpha
             )
 
         if args.amp:
@@ -290,8 +324,8 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             optimizer.step()
 
         if args.distributed:
-            loss_list, loss_recon_normal_list, loss_recon_tumor_list, loss_seg_list = distributed_all_gather(
-                [loss, loss_recon_normal, loss_recon_tumor, loss_seg], 
+            loss_list, loss_recon_normal_list, loss_recon_tumor_list, loss_seg_list, loss_blend_list = distributed_all_gather(
+                [loss, loss_recon_normal, loss_recon_tumor, loss_seg, loss_blend], 
                 out_numpy=True, 
                 is_valid=idx < loader.sampler.valid_length
             )
@@ -299,17 +333,19 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, args):
             run_loss_recon_normal.update(np.mean(np.stack(loss_recon_normal_list, axis=0)), n=args.batch_size * args.world_size)
             run_loss_recon_tumor.update(np.mean(np.stack(loss_recon_tumor_list, axis=0)), n=args.batch_size * args.world_size)
             run_loss_seg.update(np.mean(np.stack(loss_seg_list, axis=0)), n=args.batch_size * args.world_size)
+            run_loss_blend.update(np.mean(np.stack(loss_blend_list, axis=0)), n=args.batch_size * args.world_size)
         else:
             run_loss.update(loss.item(), n=args.batch_size)
             run_loss_recon_normal.update(loss_recon_normal.item(), n=args.batch_size)
             run_loss_recon_tumor.update(loss_recon_tumor.item(), n=args.batch_size)
             run_loss_seg.update(loss_seg.item(), n=args.batch_size)
+            run_loss_blend.update(loss_blend.item(), n=args.batch_size)
 
         if args.rank == 0 and idx % 10 == 0:
             print(
                 f"Epoch {epoch}/{args.max_epochs} {idx}/{len(loader)} "
                 f"loss: {run_loss.avg:.4f} "
-                f"(recon_nl: {run_loss_recon_normal.avg:.4f}, recon_t: {run_loss_recon_tumor.avg:.4f}, seg: {run_loss_seg.avg:.4f}) "
+                f"(recon_nl: {run_loss_recon_normal.avg:.4f}, recon_t: {run_loss_recon_tumor.avg:.4f}, seg: {run_loss_seg.avg:.4f}, blend: {run_loss_blend.avg:.4f}) "
                 f"time {time.time() - start_time:.2f}s"
             )
         start_time = time.time()
@@ -478,6 +514,7 @@ def val_epoch(model, loader, val_shape_dict, epoch, loss_func, args, model_infer
             target = batch_data['label'].cuda(args.rank)
             tumor_texture_layer = batch_data['tumor_texture_layer'].cuda(args.rank)
             tumor_mask_layer = batch_data['tumor_mask_layer'].cuda(args.rank)
+            alpha = batch_data['alpha'].cuda(args.rank)
 
             with autocast(enabled=args.amp):
                 if model_inferer is not None:
@@ -487,7 +524,7 @@ def val_epoch(model, loader, val_shape_dict, epoch, loss_func, args, model_infer
                     logits = model(data)
 
             if args.layer_decomposition:
-                loss, _, _, _ = loss_func(logits, data, target, tumor_texture_layer, tumor_mask_layer)
+                loss, _, _, _, _ = loss_func(logits, data, target, tumor_texture_layer, tumor_mask_layer, alpha)
                 # In layer decomposition mode, segmentation is on channels 2:5
                 predicted_tumor_mask = logits[:, 2:5, :, :, :]
             else:
