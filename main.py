@@ -262,7 +262,7 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
             transforms.Orientationd(keys=["image", "label"], axcodes="RAS"),
             transforms.Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0),
                                 mode=("bilinear", "nearest")),
-            TumorGenerated(keys=["image", "label"], prob=0.9, ellipsoid_model=ellipsoid_model),
+            TumorGenerated(keys=["image", "label"], prob=0.98, ellipsoid_model=ellipsoid_model),
             AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer", "alpha"]),
         ]
         if args.save_syn_data:

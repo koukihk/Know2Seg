@@ -113,29 +113,13 @@ def get_absolute_coordinate(relative_coordinate, original_shape, target_volume, 
     return np.array([absolute_x, absolute_y, absolute_z], dtype=float)
 
 def ellipsoid_select(mask_scan, ellipsoid_model=None, max_attempts=600, edge_op="both", use_optimized=True):
-    """
-    在肝脏掩码中选择肿瘤位置点
-    
-    参数:
-        mask_scan: 3D掩码数组
-        ellipsoid_model: 椭球体模型
-        max_attempts: 最大尝试次数
-        edge_op: 边缘检测方法
-        use_optimized: 是否使用本地优化的采样方法
-        
-    返回:
-        选择的点坐标
-    """
     if use_optimized and ellipsoid_model is not None:
-        # 导入优化版本的采样函数
         try:
             from ellipsoid_sampler import optimized_ellipsoid_select
             return optimized_ellipsoid_select(mask_scan, ellipsoid_model, max_attempts, edge_op)
         except ImportError:
             print("Warning: optimized_ellipsoid_select not found, falling back to original method")
     
-    # 原始的实现代码保持不变
-    # 找到肝脏区域边界
     x_start, x_end = np.where(np.any(mask_scan, axis=(1, 2)))[0][[0, -1]]
     y_start, y_end = np.where(np.any(mask_scan, axis=(0, 2)))[0][[0, -1]]
     z_start, z_end = np.where(np.any(mask_scan, axis=(0, 1)))[0][[0, -1]]
@@ -496,8 +480,8 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
 
     return geo_mask
 
-def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False):
-    geo_mask = get_fixed_geo(mask_scan, tumor_type)
+def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
+    geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
 
     sigma = np.random.uniform(1, 2)
     if edge_advanced_blur:
@@ -514,8 +498,8 @@ def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=Fa
 
     return abnormally_full, abnormally_mask, tumor_texture_layer, geo_mask, geo_blur
 
-def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False):
-    geo_mask = get_fixed_geo(mask_scan, tumor_type)
+def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
+    geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
     
     organ_hu_lowerbound = 100
     outrange_standard_val = 160
@@ -588,10 +572,10 @@ def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_bl
 
     if use_enhanced_method:
         liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer, geo_blur = get_tumor_enhanced(liver_volume, liver_mask, tumor_type, cut_texture,
-                                             edge_advanced_blur)
+                                             edge_advanced_blur, ellipsoid_model)
     else:
         liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer, geo_blur = get_tumor(liver_volume, liver_mask, tumor_type, cut_texture,
-                                             edge_advanced_blur)
+                                             edge_advanced_blur, ellipsoid_model)
 
     # Restore to full size
     full_tumor_texture_layer = np.zeros_like(volume_scan)

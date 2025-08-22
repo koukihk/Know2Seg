@@ -173,9 +173,8 @@ def _get_model(args):
         elif args.swin_type == 'base':
             feature_size = 48
 
-        out_channels = 5 if args.layer_decomposition else 3
         model = SwinUNETR_v2(in_channels=1,
-                             out_channels=out_channels,
+                             out_channels=3,
                              img_size=(96, 96, 96),
                              feature_size=feature_size,
                              patch_size=2,
