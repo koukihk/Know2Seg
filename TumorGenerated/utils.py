@@ -112,7 +112,7 @@ def get_absolute_coordinate(relative_coordinate, original_shape, target_volume, 
 
     return np.array([absolute_x, absolute_y, absolute_z], dtype=float)
 
-def ellipsoid_select(mask_scan, ellipsoid_model=None, max_attempts=600, edge_op="both", use_optimized=True):
+def ellipsoid_select(mask_scan, ellipsoid_model=None, max_attempts=600, edge_op="both", use_optimized=False):
     if use_optimized and ellipsoid_model is not None:
         try:
             from ellipsoid_sampler import optimized_ellipsoid_select

@@ -546,15 +546,15 @@ def main_worker(gpu, args):
         model.load_state_dict(model_dict['state_dict'])
         print('Use pretrained weights')
 
-    from monai.losses import DiceLoss
-    import torch.nn.functional as F
-    def soft_dice_ce_loss(pred, target, smooth=1e-6):
-        pred_softmax = F.softmax(pred, dim=1)
-        dice_loss = DiceLoss(to_onehot_y=False, softmax=False, squared_pred=True, smooth_nr=0, smooth_dr=smooth)
-        dice = dice_loss(pred_softmax, target)
-        pred_log_softmax = F.log_softmax(pred, dim=1)
-        kl_div = F.kl_div(pred_log_softmax, target, reduction='batchmean')
-        return dice + kl_div
+    # from monai.losses import DiceLoss
+    # import torch.nn.functional as F
+    # def soft_dice_ce_loss(pred, target, smooth=1e-6):
+    #     pred_softmax = F.softmax(pred, dim=1)
+    #     dice_loss = DiceLoss(to_onehot_y=False, softmax=False, squared_pred=True, smooth_nr=0, smooth_dr=smooth)
+    #     dice = dice_loss(pred_softmax, target)
+    #     pred_log_softmax = F.log_softmax(pred, dim=1)
+    #     kl_div = F.kl_div(pred_log_softmax, target, reduction='batchmean')
+    #     return dice + kl_div
 
     # dice_loss = DiceCELoss(to_onehot_y=False, softmax=True, squared_pred=True, smooth_nr=1e-6, smooth_dr=1e-6)
     #dice_loss = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
