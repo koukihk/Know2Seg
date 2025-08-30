@@ -146,7 +146,13 @@ parser.add_argument('--cache_num', default=500, type=int)
 
 parser.add_argument('--use_pretrained', action='store_true')
 parser.add_argument('--layer_decomposition', action='store_true', help='Enable layer decomposition training (5 output channels)')
-
+parser.add_argument('--tumor_margin', default=1, type=int, help='Minimum voxel margin from organ boundary for tumor placement')
+# Dynamic lambda_blend scheduling for LayerDecompositionLoss
+parser.add_argument('--lambda_blend_init', default=0.2, type=float, help='Initial lambda for blended reconstruction loss')
+parser.add_argument('--lambda_blend_final', default=0.8, type=float, help='Final lambda for blended reconstruction loss')
+parser.add_argument('--lambda_blend_warmup_epochs', default=50, type=int, help='Warmup epochs to reach final lambda_blend')
+parser.add_argument('--enable_stage_ii_after', default=-1, type=int, help='Enable Stage II pseudo-labeling after this epoch, -1 to disable')
+parser.add_argument('--stage_ii_confidence', default=0.9, type=float, help='Confidence threshold for Stage II pseudo-labeling')
 
 def optuna_objective(trial, args):
     if args.optuna_study_name == 'feta21_randaugment':
@@ -262,7 +268,7 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
             transforms.Orientationd(keys=["image", "label"], axcodes="RAS"),
             transforms.Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0),
                                 mode=("bilinear", "nearest")),
-            TumorGenerated(keys=["image", "label"], prob=0.98, ellipsoid_model=ellipsoid_model),
+            TumorGenerated(keys=["image", "label"], prob=0.98, ellipsoid_model=ellipsoid_model, margin=args.tumor_margin),
             AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer", "alpha"]),
         ]
         if args.save_syn_data:
@@ -564,7 +570,7 @@ def main_worker(gpu, args):
             lambda_recon_normal=0.3, 
             lambda_recon_tumor=0.5, 
             lambda_seg=2.0,
-            lambda_blend=0.8,      # L3 blended reconstruction weight
+            lambda_blend=args.lambda_blend_init,  # start with init value
             use_l3_blend=True,     # Enable L3 blend loss
             stage_ii_mode=False,   # Disable Stage II initially
             confidence_threshold=0.9

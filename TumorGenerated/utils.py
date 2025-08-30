@@ -112,7 +112,7 @@ def get_absolute_coordinate(relative_coordinate, original_shape, target_volume, 
 
     return np.array([absolute_x, absolute_y, absolute_z], dtype=float)
 
-def ellipsoid_select(mask_scan, ellipsoid_model=None, max_attempts=600, edge_op="both", use_optimized=False):
+def ellipsoid_select(mask_scan, ellipsoid_model=None, max_attempts=600, edge_op="both", use_optimized=False, margin=1):
     if use_optimized and ellipsoid_model is not None:
         try:
             from ellipsoid_sampler import optimized_ellipsoid_select
@@ -133,6 +133,15 @@ def ellipsoid_select(mask_scan, ellipsoid_model=None, max_attempts=600, edge_op=
     target_volume = (300, 250, 140)
     start = (x_start, y_start, z_start)
 
+    def has_margin(arr, pt, m):
+        # check local cube fully inside organ
+        if m <= 0:
+            return True
+        minb = np.maximum(pt - m, 0)
+        maxb = np.minimum(pt + m, np.array(arr.shape) - 1)
+        sub = arr[minb[0]:maxb[0] + 1, minb[1]:maxb[1] + 1, minb[2]:maxb[2] + 1]
+        return np.all(sub == 1)
+
     loop_count = 0
     while loop_count < max_attempts:
         potential_point = ellipsoid_model.get_random_point()
@@ -143,15 +152,22 @@ def ellipsoid_select(mask_scan, ellipsoid_model=None, max_attempts=600, edge_op=
         potential_point = np.clip(potential_point, 0, np.array(mask_scan.shape) - 1).astype(int)
 
         if mask_scan[tuple(potential_point)] == 1:
-            # Check if the point is not at the edge and within the middle z range
-            if not is_edge_point(mask_scan, potential_point, edge_op):
-                # and is_within_middle_z_range(potential_point, z_start, z_end)
+            # Check margin, not at edge, and within the liver
+            if has_margin(mask_scan, potential_point, margin) and (not is_edge_point(mask_scan, potential_point, edge_op)):
                 return potential_point
 
         loop_count += 1
 
-    potential_point = ellipsoid_select(mask_scan, ellipsoid_model, use_optimized=False) if ellipsoid_model is not None else random_select(mask_scan)
-    return potential_point
+    # fallback: pick random interior voxel within shrunken bbox
+    interior = np.argwhere(mask_scan[x_start:x_end, y_start:y_end, z_start:z_end] == 1)
+    if interior.size > 0:
+        ridx = np.random.randint(0, interior.shape[0])
+        candidate = interior[ridx] + np.array([x_start, y_start, z_start])
+        candidate = np.clip(candidate, 0, np.array(mask_scan.shape) - 1)
+        if has_margin(mask_scan, candidate, margin) and (not is_edge_point(mask_scan, candidate, edge_op)):
+            return candidate.astype(int)
+    # final fallback
+    return random_select(mask_scan)
 
 
 def check_sobel(mask_scan, potential_point, sobel_threshold=405, sobel_neighborhood_size=(7, 7, 7)):
@@ -279,7 +295,7 @@ def get_ellipsoid(x, y, z):
     return out
 
 
-def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
+def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None, margin=1):
     enlarge_x, enlarge_y, enlarge_z = 160, 160, 160
     geo_mask = np.zeros(
         (mask_scan.shape[0] + enlarge_x, mask_scan.shape[1] + enlarge_y, mask_scan.shape[2] + enlarge_z), dtype=np.int8)
@@ -299,7 +315,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 1))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -322,7 +338,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
             # texture = get_texture((4*x, 4*y, 4*z))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -346,7 +362,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
             # texture = get_texture((4*x, 4*y, 4*z))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -370,7 +386,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
             # texture = get_texture((4*x, 4*y, 4*z))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -394,7 +410,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 1))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -417,7 +433,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
             # texture = get_texture((4*x, 4*y, 4*z))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -441,7 +457,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
             # texture = get_texture((4*x, 4*y, 4*z))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -464,7 +480,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(1, 2))
             geo = elasticdeform.deform_random_grid(geo, sigma=sigma, points=3, order=0, axis=(0, 2))
             # texture = get_texture((4*x, 4*y, 4*z))
-            point = ellipsoid_select(mask_scan, ellipsoid_model) if ellipsoid_model is not None else random_select(mask_scan)
+            point = ellipsoid_select(mask_scan, ellipsoid_model, margin=margin) if ellipsoid_model is not None else random_select(mask_scan)
             new_point = [point[0] + enlarge_x // 2, point[1] + enlarge_y // 2, point[2] + enlarge_z // 2]
             x_low, x_high = new_point[0] - geo.shape[0] // 2, new_point[0] + geo.shape[0] // 2
             y_low, y_high = new_point[1] - geo.shape[1] // 2, new_point[1] + geo.shape[1] // 2
@@ -480,8 +496,8 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
 
     return geo_mask
 
-def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
-    geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
+def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None, margin=1):
+    geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model, margin=margin)
 
     sigma = np.random.uniform(1, 2)
     if edge_advanced_blur:
@@ -498,8 +514,8 @@ def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=Fa
 
     return abnormally_full, abnormally_mask, tumor_texture_layer, geo_mask, geo_blur
 
-def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
-    geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
+def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None, margin=1):
+    geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model, margin=margin)
     
     organ_hu_lowerbound = 100
     outrange_standard_val = 160
@@ -546,7 +562,7 @@ def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advance
     return abnormally_full, abnormally_mask, tumor_texture_layer, geo_mask, geo_blur
 
 
-def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur, ellipsoid_model=None, use_enhanced_method=False):
+def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur, ellipsoid_model=None, use_enhanced_method=False, margin=1):
     # for speed_generate_tumor, we only send the liver part into the generate program
     x_start, x_end = np.where(np.any(mask_scan, axis=(1, 2)))[0][[0, -1]]
     y_start, y_end = np.where(np.any(mask_scan, axis=(0, 2)))[0][[0, -1]]
@@ -572,10 +588,10 @@ def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_bl
 
     if use_enhanced_method:
         liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer, geo_blur = get_tumor_enhanced(liver_volume, liver_mask, tumor_type, cut_texture,
-                                             edge_advanced_blur, ellipsoid_model)
+                                             edge_advanced_blur, ellipsoid_model, margin=margin)
     else:
         liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer, geo_blur = get_tumor(liver_volume, liver_mask, tumor_type, cut_texture,
-                                             edge_advanced_blur, ellipsoid_model)
+                                             edge_advanced_blur, ellipsoid_model, margin=margin)
 
     # Restore to full size
     full_tumor_texture_layer = np.zeros_like(volume_scan)

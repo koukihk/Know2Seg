@@ -17,6 +17,7 @@ class TumorGenerated(RandomizableTransform, MapTransform):
                  ellipsoid_model=None,
                  allow_missing_keys: bool = False,
                  use_enhanced_method: bool = False,
+                 margin: int = 1,
                  ) -> None:
         MapTransform.__init__(self, keys, allow_missing_keys)
         RandomizableTransform.__init__(self, prob)
@@ -25,6 +26,7 @@ class TumorGenerated(RandomizableTransform, MapTransform):
         self.ellipsoid_model = ellipsoid_model
         self.edge_advanced_blur = True
         self.use_enhanced_method = use_enhanced_method
+        self.margin = margin  # voxel margin to organ boundary
 
         self.tumor_types = ['tiny', 'small', 'medium', 'large', 'mix']
 
@@ -52,7 +54,7 @@ class TumorGenerated(RandomizableTransform, MapTransform):
             image, label, tumor_texture_layer, tumor_mask_layer, alpha = SynthesisTumor(
                 d['image'][0], d['label'][0], tumor_type, texture,
                 self.edge_advanced_blur, self.ellipsoid_model,
-                self.use_enhanced_method
+                self.use_enhanced_method, margin=self.margin
             )
             d['image'][0] = image
             d['label'][0] = label

@@ -631,6 +631,28 @@ def run_training(model,
 
         print(args.rank, time.ctime(), 'Epoch:', epoch)
 
+        # Update dynamic settings for LayerDecompositionLoss
+        if args.layer_decomposition:
+            # Linear warmup schedule for lambda_blend
+            warmup = max(0, int(getattr(args, 'lambda_blend_warmup_epochs', 0)))
+            lb_init = float(getattr(args, 'lambda_blend_init', 0.8))
+            lb_final = float(getattr(args, 'lambda_blend_final', lb_init))
+            if warmup > 0:
+                t = min(epoch + 1, warmup) / float(warmup)
+                current_lambda_blend = lb_init + (lb_final - lb_init) * t
+            else:
+                current_lambda_blend = lb_final
+            # Apply to loss function (attr is mutable)
+            if hasattr(loss_func, 'lambda_blend'):
+                loss_func.lambda_blend = float(current_lambda_blend)
+
+            # Optionally enable Stage II after a certain epoch
+            enable_after = int(getattr(args, 'enable_stage_ii_after', -1))
+            if hasattr(loss_func, 'stage_ii_mode') and enable_after >= 0:
+                loss_func.stage_ii_mode = (epoch >= enable_after)
+
+            if args.rank == 0:
+                print(f"lambda_blend: {getattr(loss_func, 'lambda_blend', 0):.3f}; stage_ii: {getattr(loss_func, 'stage_ii_mode', False)}")
         epoch_time = time.time()
         if args.layer_decomposition:
             train_loss = train_epoch(model, train_loader, optimizer, scaler=scaler, epoch=epoch, loss_func=loss_func,
