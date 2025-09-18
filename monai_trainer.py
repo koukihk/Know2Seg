@@ -263,7 +263,6 @@ class LayerDecompositionLoss(torch.nn.Module):
             # Generate alpha mixing parameter if not provided
             if alpha is None:
                 alpha = torch.rand_like(tumor_mask_layer) * 0.8 + 0.1  # range [0.1, 0.9]
-            
             # Blended reconstruction: xi = alpha * xni + (1-alpha) * xri
             blended_recon = alpha * reconstructed_normal_liver + (1 - alpha) * reconstructed_tumor
             loss_blend = self.l1_loss(blended_recon, image)
