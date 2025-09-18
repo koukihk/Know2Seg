@@ -259,7 +259,7 @@ class LayerDecompositionLoss(torch.nn.Module):
 
         # L3: Blended Reconstruction Loss (paper eq.)
         loss_blend = 0.0
-        if self.use_l3_blend and alpha is not None:
+        if self.use_l3_blend:
             # Generate alpha mixing parameter if not provided
             if alpha is None:
                 alpha = torch.rand_like(tumor_mask_layer) * 0.8 + 0.1  # range [0.1, 0.9]
