@@ -20,8 +20,6 @@ class TumorGenerated(RandomizableTransform, MapTransform):
                  ) -> None:
         MapTransform.__init__(self, keys, allow_missing_keys)
         RandomizableTransform.__init__(self, prob)
-        random.seed(0)
-        np.random.seed(0)
         self.ellipsoid_model = ellipsoid_model
         self.edge_advanced_blur = True
         self.use_enhanced_method = use_enhanced_method

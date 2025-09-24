@@ -278,7 +278,7 @@ class LayerDecompositionLoss(torch.nn.Module):
             if high_conf_mask.sum() > 0:
                 # L4: Pseudo-label consistency loss
                 pseudo_label_onehot = F.one_hot(pseudo_labels.long(), num_classes=predicted_tumor_mask.shape[1]).permute(0, 4, 1, 2, 3).float()
-                pseudo_loss = self.dice_ce_loss(predicted_tumor_mask, pseudo_label_onehot.unsqueeze(1))
+                pseudo_loss = self.dice_ce_loss(predicted_tumor_mask, pseudo_label_onehot)
                 loss_seg = 0.5 * loss_seg + 0.5 * pseudo_loss
 
         total_loss = (self.lambda_recon_normal * loss_recon_normal +
