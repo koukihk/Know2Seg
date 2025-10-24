@@ -52,7 +52,7 @@ All other checkpoints: [link](https://huggingface.co/MrGiovanni/Pixel2Cancer/tre
 
 Data: Liver ([link](https://www.dropbox.com/scl/fi/ulok1xpk5e6nzicfipqxd/04_LiTS.tar.gz?rlkey=amo7x516if5m85x13q2iddgpj&dl=0)), Kidney ([link](https://www.dropbox.com/scl/fi/i7gzoocjnxyrqiavwuwp1/05_KiTS.tar.gz?rlkey=02mxa8f9sabcpe1858ww9580o&dl=0)), Pancreas ([link](https://www.dropbox.com/scl/fi/p35mz72vnvc01epdhr95r/Task07_Pancreas.tar.gz?rlkey=9z6grnqt6dpmh5yzz299g3wqx&dl=0))
 
-## 0. Installation
+## Installation
 
 #### Dataset
 
@@ -106,7 +106,7 @@ or you can just download the label
 wget https://www.modelscope.cn/datasets/koukihk/MedCraft/resolve/master/label.zip # from ModelScope
 ```
 
-## 1. Train segmentation models using synthetic tumors
+## Train segmentation models
 
 ```bash
 conda activate medcraft
@@ -117,26 +117,11 @@ fold=0
 dist=$((RANDOM % 99999 + 10000))
 
 # UNET (no.pretrain)
-python -W ignore main.py --optim_lr=4e-4 --batch_size=2 --lrschedule=warmup_cosine --optim_name=adamw --model_name=unet --val_every=200 --max_epochs=4000 --save_checkpoint --workers=2 --noamp --distributed --dist-url=tcp://127.0.0.1:$dist --cache_num=200 --val_overlap=0.5 --syn --ellipsoid --logdir="runs/synt.no_pretrain.unet$fold" --train_dir $train_path --val_dir $val_path --json_dir datafolds/fold_$fold.json
+python -W ignore main.py --optim_lr=4e-4 --batch_size=2 --lrschedule=warmup_cosine --optim_name=adamw --model_name=unet --val_every=200 --max_epochs=4000 --save_checkpoint --workers=2 --noamp --distributed --dist-url=tcp://127.0.0.1:$dist --cache_num=200 --val_overlap=0.5 --syn --ellipsoid --logdir="runs/synt.unet$fold" --train_dir $train_path --val_dir $val_path --json_dir datafolds/fold_$fold.json
 ```
 
-## 2. Train segmentation models using real tumors (for comparison)
+## Evaluation
 
-```bash
-conda activate medcraft
-cd MedCraft
-train_path=datafolds/healthy_ct
-val_path=datafolds/10_Decathlon/Task03_Liver
-fold=0
-dist=$((RANDOM % 99999 + 10000))
-
-# UNET (no.pretrain)
-python -W ignore main.py --optim_lr=4e-4 --batch_size=2 --lrschedule=warmup_cosine --optim_name=adamw --model_name=unet --val_every=200 --max_epochs=4000 --save_checkpoint --workers=2 --noamp --distributed --dist-url=tcp://127.0.0.1:$dist --cache_num=200 --val_overlap=0.5 --logdir="runs/real.no_pretrain.unet$fold" --train_dir $train_path --val_dir $val_path --json_dir datafolds/gmm_fold_$fold.json
-```
-
-## 3. Evaluation
-
-#### AI model trained by synthetic tumors
 
 ```bash
 conda activate medcraft
@@ -145,17 +130,6 @@ val_path=datafolds/10_Decathlon/Task03_Liver
 fold=0
 
 # UNET (no.pretrain)
-python -W ignore validation.py --model=unet --val_overlap=0.75 --val_dir $val_path --json_dir datafolds/fold_$fold.json --log_dir runs/synt.no_pretrain.unet$fold --save_dir outs
+python -W ignore validation.py --model=unet --val_overlap=0.75 --val_dir $val_path --json_dir datafolds/fold_$fold.json --log_dir runs/synt.unet$fold --save_dir outs
 ```
 
-#### AI model trained by real tumors
-
-```bash
-conda activate medcraft
-cd MedCraft
-val_path=datafolds/10_Decathlon/Task03_Liver
-fold=0
-
-# UNET (no.pretrain)
-python -W ignore validation.py --model=unet --val_overlap=0.75 --val_dir $val_path --json_dir datafolds/gmm_fold_$fold.json --log_dir runs/real.no_pretrain.unet$fold --save_dir outs
-```

@@ -230,7 +230,7 @@ def tumor_aware_cutmix_3d(data, target, mixup_loader, beta=1.0, cutmix_prob=0.5,
 class LayerDecompositionLoss(torch.nn.Module):
     def __init__(self, lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=2.0, 
                  lambda_blend=1.0, use_l3_blend=True, stage_ii_mode=False, 
-                 confidence_threshold=0.9):
+                 confidence_threshold=0.9, ablation_mode=None):
         super().__init__()
         self.l1_loss = torch.nn.L1Loss()
         self.dice_ce_loss = monai.losses.DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
@@ -241,6 +241,7 @@ class LayerDecompositionLoss(torch.nn.Module):
         self.use_l3_blend = use_l3_blend
         self.stage_ii_mode = stage_ii_mode
         self.confidence_threshold = confidence_threshold
+        self.ablation_mode = ablation_mode  # 'no_l0', 'no_l1', 'no_l2', 'no_l3', 'only_l2', etc.
 
     def forward(self, outputs, image, label, tumor_texture_layer, tumor_mask_layer, alpha=None):
         reconstructed_normal_liver = outputs[:, 0:1, :, :, :]
@@ -280,6 +281,19 @@ class LayerDecompositionLoss(torch.nn.Module):
                 pseudo_label_onehot = F.one_hot(pseudo_labels.long(), num_classes=predicted_tumor_mask.shape[1]).permute(0, 4, 1, 2, 3).float()
                 pseudo_loss = self.dice_ce_loss(predicted_tumor_mask, pseudo_label_onehot)
                 loss_seg = 0.5 * loss_seg + 0.5 * pseudo_loss
+
+        # Ablation mode: selectively disable loss components
+        if self.ablation_mode == 'no_l0':
+            loss_recon_normal = loss_recon_normal * 0
+        elif self.ablation_mode == 'no_l1':
+            loss_recon_tumor = loss_recon_tumor * 0
+        elif self.ablation_mode == 'no_l3':
+            loss_blend = loss_blend * 0
+        elif self.ablation_mode == 'only_l2':
+            # Only keep segmentation loss, disable all reconstruction
+            loss_recon_normal = loss_recon_normal * 0
+            loss_recon_tumor = loss_recon_tumor * 0
+            loss_blend = loss_blend * 0
 
         total_loss = (self.lambda_recon_normal * loss_recon_normal +
                       self.lambda_recon_tumor * loss_recon_tumor +

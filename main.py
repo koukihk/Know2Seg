@@ -146,6 +146,7 @@ parser.add_argument('--cache_num', default=500, type=int)
 
 parser.add_argument('--use_pretrained', action='store_true')
 parser.add_argument('--layer_decomposition', action='store_true', help='Enable layer decomposition training (5 output channels)')
+parser.add_argument('--ablation_mode', default=None, type=str, help='Ablation mode: no_l0, no_l1, no_l2, no_l3, only_l2, no_recon')
 
 
 def optuna_objective(trial, args):
@@ -567,7 +568,8 @@ def main_worker(gpu, args):
             lambda_blend=0.8,      # L3 blended reconstruction weight
             use_l3_blend=True,     # Enable L3 blend loss
             stage_ii_mode=False,   # Disable Stage II initially
-            confidence_threshold=0.9
+            confidence_threshold=0.9,
+            ablation_mode=args.ablation_mode  # Pass ablation mode
         )
     else:
         dice_loss = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
