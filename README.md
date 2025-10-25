@@ -1,9 +1,9 @@
-Our repository showcases a diverse collection of synthetically generated liver tumor images created using our innovative methodologies. These synthetic tumors are so realistic that they pose a challenge in distinguishing them from actual tumor images. What's particularly noteworthy is that AI models trained on our synthetic tumor dataset have demonstrated comparable - and in fact superior - performance in real tumor segmentation tasks compared to models trained on real tumor data.
+# Know2Seg
 
-This breakthrough highlights the potential of synthetic data in medical imaging applications. Would you like to learn more about the specific advantages or technical details?
+This repository presents a novel approach for generating highly realistic synthetic liver tumors using layer decomposition and advanced texture synthesis. AI models trained on our synthetic tumor dataset achieve comparable or superior performance on real tumor segmentation tasks compared to models trained exclusively on real tumor data.
 
 ```
-MedCraft
+Know2Seg
 │  main.py
 │  monai_trainer.py // Training script using MONAI framework
 │  transfer_label.py
@@ -64,8 +64,8 @@ Please download these datasets and save to `<data-path>` (user-defined).
 - 04 [Liver Tumor Segmentation Challenge (LiTS)](https://competitions.codalab.org/competitions/17094)
 
 ```bash
-wget https://www.modelscope.cn/datasets/koukihk/MedCraft/resolve/master/CT.zip # from ModelScope
-wget https://www.modelscope.cn/datasets/koukihk/MedCraft/resolve/master/Task03_Liver.zip # from ModelScope
+wget https://www.modelscope.cn/datasets/koukihk/Know2Seg/resolve/master/CT.zip # from ModelScope
+wget https://www.modelscope.cn/datasets/koukihk/Know2Seg/resolve/master/Task03_Liver.zip # from ModelScope
 ```
 
 #### Data Setting
@@ -84,9 +84,9 @@ wget https://www.modelscope.cn/datasets/koukihk/MedCraft/resolve/master/Task03_L
 The code is tested on `python 3.8, Pytorch 1.11`.
 
 ```bash
-conda create -n medcraft python=3.8
-source activate medcraft (or conda activate medcraft)
-cd MedCraft
+conda create -n know2seg python=3.8
+source activate know2seg (or conda activate know2seg)
+cd Know2Seg
 pip install external/surface-distance
 pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
 pip install -r requirements.txt
@@ -103,14 +103,14 @@ python transfer_label.py --data_path <data-path>  # <data-path> is user-defined 
 or you can just download the label
 
 ```bash
-wget https://www.modelscope.cn/datasets/koukihk/MedCraft/resolve/master/label.zip # from ModelScope
+wget https://www.modelscope.cn/datasets/koukihk/Know2Seg/resolve/master/label.zip # from ModelScope
 ```
 
 ## Train segmentation models
 
 ```bash
-conda activate medcraft
-cd MedCraft
+conda activate know2seg
+cd Know2Seg
 train_path=datafolds/healthy_ct
 val_path=datafolds/10_Decathlon/Task03_Liver
 fold=0
@@ -124,8 +124,8 @@ python -W ignore main.py --optim_lr=4e-4 --batch_size=2 --lrschedule=warmup_cosi
 
 
 ```bash
-conda activate medcraft
-cd MedCraft
+conda activate know2seg
+cd Know2Seg
 val_path=datafolds/10_Decathlon/Task03_Liver
 fold=0
 
