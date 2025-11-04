@@ -27,7 +27,7 @@ def get_predefined_texture(mask_shape, sigma_a, sigma_b):
     u_0 = np.random.uniform(0.5, 0.55)
     threshold_mask = b > 0.12  # this is for calculte the mean_0.2(b2)
     beta = u_0 / (np.sum(b * threshold_mask) / threshold_mask.sum())
-    Bj = np.clip(beta * b, 0, 1)  # 目前是0-1区间
+    Bj = np.clip(beta * b, 0, 1) 
 
     return Bj
 
@@ -41,13 +41,11 @@ def get_predefined_texture_b(mask_shape, sigma_a, sigma_b):
     a_denoised = denoise_tv_chambolle(a, weight=0.1, multichannel=False)
 
     # Step 3: Wavelet transform
-    coeffs = pywt.wavedecn(a_denoised, wavelet='db4', level=2)  # 使用3D小波分解
-    # 调整高频系数 (coeffs[1]现在包含7个3D细节分量)
+    coeffs = pywt.wavedecn(a_denoised, wavelet='db4', level=2)  
     coeffs[1] = {k: 0.3 * v for k, v in coeffs[1].items()}
-    # 清零更深层系数 (从level N-1 到 level 1)
     for i in range(2, len(coeffs)):
         coeffs[i] = {k: np.zeros_like(v) for k, v in coeffs[i].items()}
-    a_wavelet_denoised = pywt.waverecn(coeffs, wavelet='db4')  # 3D小波重构
+    a_wavelet_denoised = pywt.waverecn(coeffs, wavelet='db4')  
 
     # Normalize to 0-1
     a_wavelet_denoised = (a_wavelet_denoised - np.min(a_wavelet_denoised)) / (
@@ -70,7 +68,7 @@ def get_predefined_texture_b(mask_shape, sigma_a, sigma_b):
     u_0 = np.random.uniform(0.5, 0.55)
     threshold_mask = b > 0.12  # this is for calculte the mean_0.2(b2)
     beta = u_0 / (np.sum(b * threshold_mask) / threshold_mask.sum())
-    Bj = np.clip(beta * b, 0, 1)  # 目前是0-1区间
+    Bj = np.clip(beta * b, 0, 1)  
 
     return Bj
 
@@ -198,30 +196,20 @@ def is_edge_point(mask_scan, potential_point, edge_op="both", neighborhood_size=
         return liver_voxel_count < volume_threshold
         
     def check_erosion():
-        # 获取当前点所在的z轴位置
         z = potential_point[2]
-        # 确保z在有效范围内
         if z < 0 or z >= mask_scan.shape[2]:
-            return True  # 如果在边界外，认为是边缘点
+            return True  
             
-        # 获取z轴切片
-        mask_slice = mask_scan[..., z].copy()  # 使用copy避免修改原始掩码
-        
-        # 创建腐蚀核
+        mask_slice = mask_scan[..., z].copy()  
         kernel = np.ones((erosion_kernel_size, erosion_kernel_size), dtype=np.uint8)
-        
-        # 腐蚀肝脏掩码
         eroded_mask = cv2.erode(mask_slice.astype(np.uint8), kernel, iterations=1)
         
-        # 检查当前点在原始掩码中是肝脏点(值为1)，但在腐蚀后的掩码中不是肝脏点(值为0)
         x, y = potential_point[0], potential_point[1]
-        # 确保x,y在有效范围内
         if x < 0 or x >= mask_scan.shape[0] or y < 0 or y >= mask_scan.shape[1]:
             return True
             
         return mask_slice[x, y] == 1 and eroded_mask[x, y] == 0
 
-    # 根据选择的操作模式判断是否为边缘点
     if edge_op == "volume":
         return check_volume()
     elif edge_op == "sobel":
@@ -248,12 +236,10 @@ def get_ellipsoid(x, y, z):
     """"
     x, y, z is the radius of this ellipsoid in x, y, z direction respectly.
     """
-    # 将浮点数值转换为整数（添加安全转换）
     x = int(round(float(x)))
     y = int(round(float(y)))
     z = int(round(float(z)))
     
-    # 确保最小尺寸为1
     x = max(1, x)
     y = max(1, y)
     z = max(1, z)
