@@ -142,6 +142,8 @@ parser.add_argument('--dataset_flag', default='d', type=str)
 parser.add_argument('--train_dir', default=None, type=str)
 parser.add_argument('--val_dir', default=None, type=str)
 parser.add_argument('--json_dir', default=None, type=str)
+parser.add_argument('--extra_train_dir', default=None, type=str)
+parser.add_argument('--extra_json', default=None, type=str)
 parser.add_argument('--cache_num', default=500, type=int)
 
 parser.add_argument('--use_pretrained', action='store_true')
@@ -583,6 +585,10 @@ def main_worker(gpu, args):
 
     datalist = load_decathlon_datalist(datalist_json, True, "training", base_dir=data_dir)
     val_files = load_decathlon_datalist(datalist_json, True, "validation", base_dir=val_data_dir)
+
+    if args.extra_json and args.extra_train_dir:
+        extra_datalist = load_decathlon_datalist(args.extra_json, True, "training", base_dir=args.extra_train_dir)
+        datalist.extend(extra_datalist)
 
     # train_datalist = [data for data in datalist if data.get('valid', True)]
     train_datalist = datalist
