@@ -550,6 +550,14 @@ def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_bl
     # we need to cut it into the shape of liver_mask
     # for examples, the liver_mask.shape = 286, 173, 46; we should change the texture shape
     x_length, y_length, z_length = x_end - x_start, y_end - y_start, z_end - z_start
+
+    pad_x = max(0, x_length - texture.shape[0] + 1)
+    pad_y = max(0, y_length - texture.shape[1] + 1)
+    pad_z = max(0, z_length - texture.shape[2] + 1)
+
+    if pad_x > 0 or pad_y > 0 or pad_z > 0:
+        texture = np.pad(texture, ((0, pad_x), (0, pad_y), (0, pad_z)), mode='wrap')
+
     start_x = random.randint(0, texture.shape[
         0] - x_length - 1)  # random select the start point, -1 is to avoid boundary check
     start_y = random.randint(0, texture.shape[1] - y_length - 1)
