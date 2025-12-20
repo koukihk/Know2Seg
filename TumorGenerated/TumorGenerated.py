@@ -1,5 +1,7 @@
+import logging
 import random
-from typing import Hashable, Mapping, Dict
+from pathlib import Path
+from typing import Any, Dict, Hashable, Mapping, Optional
 
 import numpy as np
 from monai.config import KeysCollection
@@ -17,13 +19,16 @@ class TumorGenerated(RandomizableTransform, MapTransform):
                  ellipsoid_model=None,
                  allow_missing_keys: bool = False,
                  use_enhanced_method: bool = False,
+                 hparam_overrides: Optional[Dict[str, Any]] = None,
                  ) -> None:
         MapTransform.__init__(self, keys, allow_missing_keys)
         RandomizableTransform.__init__(self, prob)
         self.ellipsoid_model = ellipsoid_model
         self.edge_advanced_blur = True
         self.use_enhanced_method = use_enhanced_method
-
+        self.hparams = dict(hparam_overrides or {})
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.textures_root = Path(self.hparams.get("texture_log_root", "."))
         self.tumor_types = ['tiny', 'small', 'medium', 'large', 'mix']
 
         assert len(tumor_prob) == 5
@@ -47,10 +52,16 @@ class TumorGenerated(RandomizableTransform, MapTransform):
         if self._do_transform and (np.max(d['label']) <= 1):
             tumor_type = np.random.choice(self.tumor_types, p=self.tumor_prob.ravel())
             texture = random.choice(self.textures)
+            image_metadata = d.get("image_meta_dict") or {}
+            image_path = Path(str(image_metadata.get("filename_or_obj", "unknown")))
+            image_id = f"{image_path.parent.name}/{image_path.name}" if image_path.parent.name else image_path.name
+            if not self.logger.handlers:
+                logging.basicConfig(level=logging.INFO)
             image, label, tumor_texture_layer, tumor_mask_layer, alpha = SynthesisTumor(
                 d['image'][0], d['label'][0], tumor_type, texture,
                 self.edge_advanced_blur, self.ellipsoid_model,
-                self.use_enhanced_method
+                self.use_enhanced_method,
+                hyperparams=self.hparams
             )
             d['image'][0] = image
             d['label'][0] = label

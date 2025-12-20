@@ -1,6 +1,8 @@
 import os
 import warnings
+import json
 from functools import partial
+from pathlib import Path
 
 import nibabel as nb
 import numpy as np
@@ -27,6 +29,11 @@ from TumorGenerated import TumorGenerated, TumorFilter, AddValidKeyd, AddMissing
 from tumor_saver import TumorSaver
 
 import argparse
+
+try:
+    import yaml  # type: ignore
+except ImportError:  # pragma: no cover
+    yaml = None
 
 class SaveSyntheticallyGeneratedData(transforms.Transform):
     """
@@ -149,7 +156,34 @@ parser.add_argument('--cache_num', default=500, type=int)
 parser.add_argument('--use_pretrained', action='store_true')
 parser.add_argument('--layer_decomposition', action='store_true', help='Enable layer decomposition training (5 output channels)')
 parser.add_argument('--ablation_mode', default=None, type=str, help='Ablation mode: no_l0, no_l1, no_l2, no_l3, only_l2, no_recon')
+parser.add_argument('--hparam_cfg', default=None, type=str)
+parser.add_argument('--hparam_profile', default=None, type=str)
 
+def _load_hparam_profile(cfg_path, profile_name):
+    if cfg_path is None or profile_name is None:
+        return {}
+
+    path = Path(cfg_path)
+    if not path.exists():
+        raise FileNotFoundError(f'hparam config not found: {cfg_path}')
+
+    suffix = path.suffix.lower()
+    with path.open('r', encoding='utf-8') as f:
+        if suffix in ('.yaml', '.yml'):
+            if yaml is None:
+                raise ImportError('pyyaml is required to load yaml config')
+            data = yaml.safe_load(f) or {}
+        else:
+            data = json.load(f)
+
+    if profile_name not in data:
+        raise KeyError(f'profile {profile_name} not found in {cfg_path}')
+
+    profile = data[profile_name] or {}
+    if not isinstance(profile, dict):
+        raise ValueError(f'profile {profile_name} must be a dict')
+
+    return profile
 
 def optuna_objective(trial, args):
     if args.optuna_study_name == 'feta21_randaugment':
@@ -265,7 +299,8 @@ def _get_transform(args, ellipsoid_model=None, filter_model=None, filter_inferer
             transforms.Orientationd(keys=["image", "label"], axcodes="RAS"),
             transforms.Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0),
                                 mode=("bilinear", "nearest")),
-            TumorGenerated(keys=["image", "label"], prob=0.98, ellipsoid_model=ellipsoid_model),
+            TumorGenerated(keys=["image", "label"], prob=0.98, ellipsoid_model=ellipsoid_model,
+                           hparam_overrides=getattr(args, "tumor_hparams", None)),
             AddMissingKeysd(keys=["tumor_texture_layer", "tumor_mask_layer", "alpha"]),
         ]
         if args.save_syn_data:
@@ -369,6 +404,9 @@ def main():
 
     if args.randaugment_n > 0:
         args.seg_aug_mode = 5
+
+    # Load hyperparameter profile for sensitivity experiments
+    args.tumor_hparams = _load_hparam_profile(args.hparam_cfg, args.hparam_profile)
 
     print("MAIN Argument values:")
     for k, v in vars(args).items():

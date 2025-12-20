@@ -1,0 +1,25 @@
+baseline: {}
+
+tau_legacy:
+  tau: 5
+tau_low:
+  tau: 8
+tau_high:
+  tau: 12
+
+kappa_low:
+  kappa: 350
+kappa_high:
+  kappa: 450
+
+delta_low:
+  delta_range: [55, 95]
+delta_high:
+  delta_range: [90, 160]
+
+edge_softest:
+  edge_soft: [0.0, 1.0]
+edge_soft:
+  edge_soft: [0.5, 1.5]
+edge_strong:
+  edge_soft: [1.5, 2.5]
