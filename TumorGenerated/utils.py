@@ -466,6 +466,7 @@ def get_fixed_geo(mask_scan, tumor_type, ellipsoid_model=None):
 
     return geo_mask
 
+
 def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
     geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
 
@@ -474,32 +475,37 @@ def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=Fa
         sigma = np.random.uniform(1.0, 2.1)
     difference = np.random.uniform(65, 145)
 
-    # blur the boundary
-    geo_blur = gaussian_filter(geo_mask*1.0, sigma)
-    tumor_texture_layer = texture * geo_blur * difference * mask_scan
-    abnormally = (volume_scan - tumor_texture_layer) * mask_scan
-    
+    # blur the boundary (alpha)
+    geo_blur = gaussian_filter(geo_mask * 1.0, sigma)
+
+    pure_difference = texture * difference * mask_scan
+    tumor_diff_with_alpha = pure_difference * geo_blur
+    abnormally = (volume_scan - tumor_diff_with_alpha) * mask_scan
+    tumor_s_layer = (volume_scan - pure_difference) * mask_scan
+
     abnormally_full = volume_scan * (1 - mask_scan) + abnormally
     abnormally_mask = mask_scan + geo_mask
 
-    return abnormally_full, abnormally_mask, tumor_texture_layer, geo_mask, geo_blur
+    return abnormally_full, abnormally_mask, tumor_s_layer, geo_mask, geo_blur
+
 
 def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
     geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
-    
+
     organ_hu_lowerbound = 100
     outrange_standard_val = 160
     interval = (outrange_standard_val - organ_hu_lowerbound) / 3
-    
+
     density_map = volume_scan.copy()
     vessel_condition = volume_scan >= outrange_standard_val
-    high_tissue_condition = (volume_scan >= (organ_hu_lowerbound + 2 * interval)) & (volume_scan < outrange_standard_val)
-    
+    high_tissue_condition = (volume_scan >= (organ_hu_lowerbound + 2 * interval)) & (
+                volume_scan < outrange_standard_val)
+
     sigma = np.random.uniform(1, 2)
     if edge_advanced_blur:
         sigma = np.random.uniform(1.0, 2.2)
     difference = np.random.uniform(65, 145)
-    
+
     death_cells = np.zeros_like(geo_mask)
     if tumor_type == 'large' or tumor_type == 'medium':
         death_prob = 0.7 if tumor_type == 'large' else 0.3
@@ -507,32 +513,41 @@ def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advance
             from scipy import ndimage
             eroded_mask = ndimage.binary_erosion(geo_mask, iterations=3)
             death_cells[eroded_mask] = 1
-    
-    geo_blur = gaussian_filter(geo_mask*1.0, sigma)
-    tumor_texture_layer = texture * geo_blur * difference * mask_scan
-    abnormally = (volume_scan - tumor_texture_layer) * mask_scan
-    
+
+    geo_blur = gaussian_filter(geo_mask * 1.0, sigma)
+
+    pure_difference = texture * difference * mask_scan
+    tumor_diff_with_alpha = pure_difference * geo_blur
+    abnormally = (volume_scan - tumor_diff_with_alpha) * mask_scan
+    tumor_s_layer = (volume_scan - pure_difference) * mask_scan
+
     conflict_vessel = vessel_condition & (geo_blur > 0.2)
     conflict_high = high_tissue_condition & (geo_blur > 0.2)
-    
+
     if np.any(conflict_vessel):
-        abnormally[conflict_vessel] = volume_scan[conflict_vessel] * ((organ_hu_lowerbound + interval/2) / outrange_standard_val)
-    
+        fixed_val = volume_scan[conflict_vessel] * ((organ_hu_lowerbound + interval / 2) / outrange_standard_val)
+        abnormally[conflict_vessel] = fixed_val
+        tumor_s_layer[conflict_vessel] = fixed_val  # Update S to reflect vessel structure
+
     if np.any(conflict_high):
-        abnormally[conflict_high] = volume_scan[conflict_high] * ((organ_hu_lowerbound + 2 * interval) / outrange_standard_val)
-    
+        fixed_val = volume_scan[conflict_high] * ((organ_hu_lowerbound + 2 * interval) / outrange_standard_val)
+        abnormally[conflict_high] = fixed_val
+        tumor_s_layer[conflict_high] = fixed_val  # Update S to reflect high tissue
+
     if np.any(death_cells):
         death_difference = np.random.uniform(90, 110)
         death_region = death_cells * texture * death_difference
         abnormally = abnormally + (death_region * mask_scan)
-    
+        tumor_s_layer = tumor_s_layer + (death_region * mask_scan)
+
     abnormally_full = volume_scan * (1 - mask_scan) + abnormally
     abnormally_mask = mask_scan + geo_mask
-    
-    return abnormally_full, abnormally_mask, tumor_texture_layer, geo_mask, geo_blur
+
+    return abnormally_full, abnormally_mask, tumor_s_layer, geo_mask, geo_blur
 
 
-def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur, ellipsoid_model=None, use_enhanced_method=False):
+def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur, ellipsoid_model=None,
+                   use_enhanced_method=False):
     # for speed_generate_tumor, we only send the liver part into the generate program
     x_start, x_end = np.where(np.any(mask_scan, axis=(1, 2)))[0][[0, -1]]
     y_start, y_end = np.where(np.any(mask_scan, axis=(0, 2)))[0][[0, -1]]
@@ -565,18 +580,22 @@ def SynthesisTumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_bl
     cut_texture = texture[start_x:start_x + x_length, start_y:start_y + y_length, start_z:start_z + z_length]
 
     if use_enhanced_method:
-        liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer, geo_blur = get_tumor_enhanced(liver_volume, liver_mask, tumor_type, cut_texture,
-                                             edge_advanced_blur, ellipsoid_model)
+        liver_volume, liver_mask, tumor_s_layer, tumor_mask_layer, geo_blur = get_tumor_enhanced(liver_volume,
+                                                                                                 liver_mask, tumor_type,
+                                                                                                 cut_texture,
+                                                                                                 edge_advanced_blur,
+                                                                                                 ellipsoid_model)
     else:
-        liver_volume, liver_mask, tumor_texture_layer, tumor_mask_layer, geo_blur = get_tumor(liver_volume, liver_mask, tumor_type, cut_texture,
-                                             edge_advanced_blur, ellipsoid_model)
+        liver_volume, liver_mask, tumor_s_layer, tumor_mask_layer, geo_blur = get_tumor(liver_volume, liver_mask,
+                                                                                        tumor_type, cut_texture,
+                                                                                        edge_advanced_blur,
+                                                                                        ellipsoid_model)
 
     # Restore to full size
     full_tumor_texture_layer = np.zeros_like(volume_scan)
     full_tumor_mask_layer = np.zeros_like(mask_scan)
     full_alpha = np.zeros_like(volume_scan)
-
-    full_tumor_texture_layer[x_start:x_end, y_start:y_end, z_start:z_end] = tumor_texture_layer
+    full_tumor_texture_layer[x_start:x_end, y_start:y_end, z_start:z_end] = tumor_s_layer
     full_tumor_mask_layer[x_start:x_end, y_start:y_end, z_start:z_end] = tumor_mask_layer
     full_alpha[x_start:x_end, y_start:y_end, z_start:z_end] = geo_blur
 

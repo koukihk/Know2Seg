@@ -227,13 +227,15 @@ def tumor_aware_cutmix_3d(data, target, mixup_loader, beta=1.0, cutmix_prob=0.5,
         other_target_one_hot[:, :, d1:d1 + cut_d, h1:h1 + cut_h, w1:w1 + cut_w]
     return mixed_data, mixed_target
 
+
 class LayerDecompositionLoss(torch.nn.Module):
-    def __init__(self, lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=2.0, 
-                 lambda_blend=1.0, use_l3_blend=True, stage_ii_mode=False, 
+    def __init__(self, lambda_recon_normal=1.0, lambda_recon_tumor=1.0, lambda_seg=2.0,
+                 lambda_blend=1.0, use_l3_blend=True, stage_ii_mode=False,
                  confidence_threshold=0.9, ablation_mode=None):
         super().__init__()
         self.l1_loss = torch.nn.L1Loss()
-        self.dice_ce_loss = monai.losses.DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0, smooth_dr=1e-6)
+        self.dice_ce_loss = monai.losses.DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0,
+                                                    smooth_dr=1e-6)
         self.lambda_recon_normal = lambda_recon_normal
         self.lambda_recon_tumor = lambda_recon_tumor
         self.lambda_seg = lambda_seg
@@ -241,48 +243,44 @@ class LayerDecompositionLoss(torch.nn.Module):
         self.use_l3_blend = use_l3_blend
         self.stage_ii_mode = stage_ii_mode
         self.confidence_threshold = confidence_threshold
-        self.ablation_mode = ablation_mode  # 'no_l0', 'no_l1', 'no_l2', 'no_l3', 'only_l2', etc.
+        self.ablation_mode = ablation_mode
 
     def forward(self, outputs, image, label, tumor_texture_layer, tumor_mask_layer, alpha=None):
         reconstructed_normal_liver = outputs[:, 0:1, :, :, :]
         reconstructed_tumor = outputs[:, 1:2, :, :, :]
         predicted_tumor_mask = outputs[:, 2:5, :, :, :]
 
-        # L0: Normal Liver Reconstruction Loss
         normal_liver_region = image * (1 - tumor_mask_layer)
         loss_recon_normal = self.l1_loss(reconstructed_normal_liver, normal_liver_region)
-
-        # L1: Tumor Reconstruction Loss
         loss_recon_tumor = self.l1_loss(reconstructed_tumor, tumor_texture_layer)
-
-        # L2: Segmentation Loss
         loss_seg = self.dice_ce_loss(predicted_tumor_mask, label)
+        loss_blend = torch.tensor(0.0, device=image.device)
 
-        # L3: Blended Reconstruction Loss (paper eq.)
-        loss_blend = 0.0
         if self.use_l3_blend:
-            # Generate alpha mixing parameter if not provided
+            pred_prob = torch.softmax(predicted_tumor_mask, dim=1)
+            pred_tumor_prob = pred_prob[:, 2:3, :, :, :]
             if alpha is None:
-                alpha = torch.rand_like(tumor_mask_layer) * 0.8 + 0.1  # range [0.1, 0.9]
-            # Blended reconstruction: xi = alpha * xni + (1-alpha) * xri
-            blended_recon = alpha * reconstructed_normal_liver + (1 - alpha) * reconstructed_tumor
+                alpha = torch.rand(image.shape[0], 1, 1, 1, 1, device=image.device) * 0.8 + 0.1
+            if alpha.ndim == 1:
+                alpha = alpha.view(-1, 1, 1, 1, 1)
+            tumor_mix_weight = alpha * pred_tumor_prob
+            blended_recon = (1 - tumor_mix_weight) * reconstructed_normal_liver + \
+                            tumor_mix_weight * reconstructed_tumor
             loss_blend = self.l1_loss(blended_recon, image)
 
-        # Stage II: Pseudo-labeling for high-confidence predictions
+        # Stage II: Pseudo-labeling (Online Self-training)
         if self.stage_ii_mode:
-            # Generate pseudo labels from high-confidence predictions
             pred_probs = torch.softmax(predicted_tumor_mask, dim=1)
             max_probs, pseudo_labels = torch.max(pred_probs, dim=1)
-            
-            # Only use high-confidence regions for pseudo-labeling
+
             high_conf_mask = max_probs > self.confidence_threshold
             if high_conf_mask.sum() > 0:
-                # L4: Pseudo-label consistency loss
-                pseudo_label_onehot = F.one_hot(pseudo_labels.long(), num_classes=predicted_tumor_mask.shape[1]).permute(0, 4, 1, 2, 3).float()
+                pseudo_label_onehot = torch.zeros_like(predicted_tumor_mask)
+                pseudo_label_onehot.scatter_(1, pseudo_labels.unsqueeze(1).long(), 1.0)
                 pseudo_loss = self.dice_ce_loss(predicted_tumor_mask, pseudo_label_onehot)
                 loss_seg = 0.5 * loss_seg + 0.5 * pseudo_loss
 
-        # Ablation mode: selectively disable loss components
+        # Ablation mode
         if self.ablation_mode == 'no_l0':
             loss_recon_normal = loss_recon_normal * 0
         elif self.ablation_mode == 'no_l1':
@@ -290,7 +288,6 @@ class LayerDecompositionLoss(torch.nn.Module):
         elif self.ablation_mode == 'no_l3':
             loss_blend = loss_blend * 0
         elif self.ablation_mode == 'only_l2':
-            # Only keep segmentation loss, disable all reconstruction
             loss_recon_normal = loss_recon_normal * 0
             loss_recon_tumor = loss_recon_tumor * 0
             loss_blend = loss_blend * 0

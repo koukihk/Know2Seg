@@ -120,10 +120,9 @@ def analyze_tumor_by_size(pred_tumor, label_tumor, spacing_mm):
     if np.sum(label_tumor) > 0:
         label_cc, label_num = ndimage.label(label_tumor)
         for i in range(1, label_num + 1):
-            # 提取单个肿瘤区域
             tumor_region = (label_cc == i)
             tumor_size = np.sum(tumor_region)
-            if tumor_size < 8:  # 忽略太小的肿瘤
+            if tumor_size < 8:
                 continue
                 
             tumor_volume_mm = pixel2voxel(tumor_size, spacing_mm)
