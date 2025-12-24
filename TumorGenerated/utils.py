@@ -511,15 +511,24 @@ def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advance
     geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model, hyperparams)
     base_sigma_low, base_sigma_high = _resolve_range(hyperparams.get("edge_soft"), (1.0, 2.0))
     if edge_advanced_blur:
-        sigma_low, sigma_high = (1.0, 2.2) 
+        sigma_low, sigma_high = (1.0, 2.2)
     else:
         sigma_low, sigma_high = base_sigma_low, base_sigma_high
     sigma = np.random.uniform(sigma_low, sigma_high)
     geo_blur = gaussian_filter(geo_mask * 1.0, sigma)
-    liver_mean = np.sum(volume_scan * mask_scan) / (np.sum(mask_scan) + 1e-5)
-    is_normalized = np.abs(liver_mean) < 10 
-    target_tumor_val = 0.0
-    
+
+    if "target_hu_range" in hyperparams:
+        hu_low, hu_high = _resolve_range(hyperparams.get("target_hu_range"), (30, 55))
+        target_tumor_val = np.random.uniform(hu_low, hu_high)
+    elif "delta_range" in hyperparams:
+        d_low, d_high = _resolve_range(hyperparams.get("delta_range"), (65, 145))
+        if d_low > 100:
+            target_tumor_val = np.random.uniform(15, 30)
+        else:
+            target_tumor_val = np.random.uniform(40, 60)
+    else:
+        target_tumor_val = np.random.uniform(30, 55)
+
     death_cells = np.zeros_like(geo_mask)
     has_death = False
     if tumor_type in ['large', 'medium']:
@@ -530,16 +539,7 @@ def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advance
             death_cells[eroded_mask] = 1
             has_death = True
 
-    if is_normalized:
-        scale_low, scale_high = _resolve_range(hyperparams.get("scale_range"), (0.6, 0.8))
-        scale_factor = np.random.uniform(scale_low, scale_high)
-        target_tumor_val = liver_mean * scale_factor
-        death_val = target_tumor_val * 0.8 
-    else:
-        hu_low, hu_high = _resolve_range(hyperparams.get("target_hu_range"), (30, 55))
-        target_tumor_val = np.random.uniform(hu_low, hu_high)
-        death_val = np.random.uniform(10, 25)
-
+    death_val = np.random.uniform(10, 25) 
     texture_mod = texture * 0.4 + 0.8 
     tumor_s_layer = np.ones_like(volume_scan) * target_tumor_val
     
