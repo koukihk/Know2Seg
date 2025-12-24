@@ -516,24 +516,31 @@ def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=Fa
 
 def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
     geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
-
     sigma = np.random.uniform(1, 2)
     if edge_advanced_blur:
         sigma = np.random.uniform(1.0, 2.2)
     
     geo_blur = gaussian_filter(geo_mask * 1.0, sigma)
-    liver_mean = np.sum(volume_scan * mask_scan) / (np.sum(mask_scan) + 1e-5)
-    is_normalized = np.abs(liver_mean) < 10 
-    target_tumor_val = 0.0
+    target_tumor_val = np.random.uniform(30, 55)
+    death_cells = np.zeros_like(geo_mask)
+    has_death = False
     
-    if is_normalized:
-        scale_factor = np.random.uniform(0.6, 0.8) 
-        target_tumor_val = liver_mean * scale_factor
-    else:
-        target_tumor_val = np.random.uniform(30, 55)
+    if tumor_type in ['large', 'medium']:
+        death_prob = 0.7 if tumor_type == 'large' else 0.3
+        if np.random.rand() < death_prob:
+            from scipy import ndimage
+            eroded_mask = ndimage.binary_erosion(geo_mask, iterations=3)
+            death_cells[eroded_mask] = 1
+            has_death = True
 
+    death_val = np.random.uniform(10, 25) 
     texture_mod = texture * 0.4 + 0.8 
-    tumor_s_layer = target_tumor_val * texture_mod * mask_scan
+    tumor_s_layer = np.ones_like(volume_scan) * target_tumor_val
+    
+    if has_death:
+        tumor_s_layer = tumor_s_layer * (1 - death_cells) + death_val * death_cells
+    
+    tumor_s_layer = tumor_s_layer * texture_mod * mask_scan
     difference_map = (volume_scan - tumor_s_layer) * mask_scan
     tumor_diff_with_alpha = difference_map * geo_blur
     abnormally = (volume_scan - tumor_diff_with_alpha) * mask_scan
