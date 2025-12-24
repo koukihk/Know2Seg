@@ -492,54 +492,26 @@ def get_tumor(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=Fa
 def get_tumor_enhanced(volume_scan, mask_scan, tumor_type, texture, edge_advanced_blur=False, ellipsoid_model=None):
     geo_mask = get_fixed_geo(mask_scan, tumor_type, ellipsoid_model)
 
-    organ_hu_lowerbound = 100
-    outrange_standard_val = 160
-    interval = (outrange_standard_val - organ_hu_lowerbound) / 3
-
-    density_map = volume_scan.copy()
-    vessel_condition = volume_scan >= outrange_standard_val
-    high_tissue_condition = (volume_scan >= (organ_hu_lowerbound + 2 * interval)) & (
-                volume_scan < outrange_standard_val)
-
     sigma = np.random.uniform(1, 2)
     if edge_advanced_blur:
         sigma = np.random.uniform(1.0, 2.2)
-    difference = np.random.uniform(65, 145)
-
-    death_cells = np.zeros_like(geo_mask)
-    if tumor_type == 'large' or tumor_type == 'medium':
-        death_prob = 0.7 if tumor_type == 'large' else 0.3
-        if np.random.rand() < death_prob:
-            from scipy import ndimage
-            eroded_mask = ndimage.binary_erosion(geo_mask, iterations=3)
-            death_cells[eroded_mask] = 1
-
+    
     geo_blur = gaussian_filter(geo_mask * 1.0, sigma)
+    liver_mean = np.sum(volume_scan * mask_scan) / (np.sum(mask_scan) + 1e-5)
+    is_normalized = np.abs(liver_mean) < 10 
+    target_tumor_val = 0.0
+    
+    if is_normalized:
+        scale_factor = np.random.uniform(0.6, 0.8) 
+        target_tumor_val = liver_mean * scale_factor
+    else:
+        target_tumor_val = np.random.uniform(30, 55)
 
-    pure_difference = texture * difference * mask_scan
-    tumor_diff_with_alpha = pure_difference * geo_blur
+    texture_mod = texture * 0.4 + 0.8 
+    tumor_s_layer = target_tumor_val * texture_mod * mask_scan
+    difference_map = (volume_scan - tumor_s_layer) * mask_scan
+    tumor_diff_with_alpha = difference_map * geo_blur
     abnormally = (volume_scan - tumor_diff_with_alpha) * mask_scan
-    tumor_s_layer = (volume_scan - pure_difference) * mask_scan
-
-    conflict_vessel = vessel_condition & (geo_blur > 0.2)
-    conflict_high = high_tissue_condition & (geo_blur > 0.2)
-
-    if np.any(conflict_vessel):
-        fixed_val = volume_scan[conflict_vessel] * ((organ_hu_lowerbound + interval / 2) / outrange_standard_val)
-        abnormally[conflict_vessel] = fixed_val
-        tumor_s_layer[conflict_vessel] = fixed_val  # Update S to reflect vessel structure
-
-    if np.any(conflict_high):
-        fixed_val = volume_scan[conflict_high] * ((organ_hu_lowerbound + 2 * interval) / outrange_standard_val)
-        abnormally[conflict_high] = fixed_val
-        tumor_s_layer[conflict_high] = fixed_val  # Update S to reflect high tissue
-
-    if np.any(death_cells):
-        death_difference = np.random.uniform(90, 110)
-        death_region = death_cells * texture * death_difference
-        abnormally = abnormally + (death_region * mask_scan)
-        tumor_s_layer = tumor_s_layer + (death_region * mask_scan)
-
     abnormally_full = volume_scan * (1 - mask_scan) + abnormally
     abnormally_mask = mask_scan + geo_mask
 
