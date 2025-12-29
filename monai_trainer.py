@@ -236,6 +236,7 @@ class LayerDecompositionLoss(torch.nn.Module):
         self.l1_loss = torch.nn.L1Loss()
         self.dice_ce_loss = monai.losses.DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=True, smooth_nr=0,
                                                     smooth_dr=1e-6)
+
         self.lambda_recon_normal = lambda_recon_normal
         self.lambda_recon_tumor = lambda_recon_tumor
         self.lambda_seg = lambda_seg
@@ -246,12 +247,11 @@ class LayerDecompositionLoss(torch.nn.Module):
         self.ablation_mode = ablation_mode
 
     def forward(self, outputs, image, label, tumor_texture_layer, tumor_mask_layer, alpha=None):
-        reconstructed_normal_liver = outputs[:, 0:1, :, :, :]
-        reconstructed_tumor = outputs[:, 1:2, :, :, :]
+        reconstructed_normal_liver = torch.clamp(outputs[:, 0:1, :, :, :], 0.0, 1.0)
+        reconstructed_tumor = torch.clamp(outputs[:, 1:2, :, :, :], 0.0, 1.0)
         predicted_tumor_mask = outputs[:, 2:5, :, :, :]
-
-        normal_liver_region = image * (1 - tumor_mask_layer)
-        loss_recon_normal = self.l1_loss(reconstructed_normal_liver, normal_liver_region)
+        loss_recon_normal = self.l1_loss(reconstructed_normal_liver * (1 - tumor_mask_layer),
+                                         image * (1 - tumor_mask_layer))
         loss_recon_tumor = self.l1_loss(reconstructed_tumor, tumor_texture_layer)
         loss_seg = self.dice_ce_loss(predicted_tumor_mask, label)
         loss_blend = torch.tensor(0.0, device=image.device)
@@ -259,28 +259,18 @@ class LayerDecompositionLoss(torch.nn.Module):
         if self.use_l3_blend:
             pred_prob = torch.softmax(predicted_tumor_mask, dim=1)
             pred_tumor_prob = pred_prob[:, 2:3, :, :, :]
-            if alpha is None:
-                alpha = torch.rand(image.shape[0], 1, 1, 1, 1, device=image.device) * 0.8 + 0.1
-            if alpha.ndim == 1:
-                alpha = alpha.view(-1, 1, 1, 1, 1)
-            tumor_mix_weight = alpha * pred_tumor_prob
-            blended_recon = (1 - tumor_mix_weight) * reconstructed_normal_liver + \
-                            tumor_mix_weight * reconstructed_tumor
+            blended_recon = (1 - pred_tumor_prob) * reconstructed_normal_liver + \
+                            pred_tumor_prob * reconstructed_tumor
             loss_blend = self.l1_loss(blended_recon, image)
 
-        # Stage II: Pseudo-labeling (Online Self-training)
         if self.stage_ii_mode:
             pred_probs = torch.softmax(predicted_tumor_mask, dim=1)
             max_probs, pseudo_labels = torch.max(pred_probs, dim=1)
 
             high_conf_mask = max_probs > self.confidence_threshold
             if high_conf_mask.sum() > 0:
-                pseudo_label_onehot = torch.zeros_like(predicted_tumor_mask)
-                pseudo_label_onehot.scatter_(1, pseudo_labels.unsqueeze(1).long(), 1.0)
-                pseudo_loss = self.dice_ce_loss(predicted_tumor_mask, pseudo_label_onehot)
-                loss_seg = 0.5 * loss_seg + 0.5 * pseudo_loss
+                loss_seg = 0.5 * loss_seg + 0.5 * self.dice_ce_loss(predicted_tumor_mask, pseudo_labels.unsqueeze(1))
 
-        # Ablation mode
         if self.ablation_mode == 'no_l0':
             loss_recon_normal = loss_recon_normal * 0
         elif self.ablation_mode == 'no_l1':
