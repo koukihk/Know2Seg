@@ -250,12 +250,14 @@ class LayerDecompositionLoss(torch.nn.Module):
         reconstructed_normal_liver = torch.clamp(outputs[:, 0:1, :, :, :], 0.0, 1.0)
         reconstructed_tumor = torch.clamp(outputs[:, 1:2, :, :, :], 0.0, 1.0)
         predicted_tumor_mask = outputs[:, 2:5, :, :, :]
+        target_tumor_normalized = (tumor_texture_layer - (-21)) / (189 - (-21))
+        target_tumor_normalized = torch.clamp(target_tumor_normalized, 0.0, 1.0)
+
         loss_recon_normal = self.l1_loss(reconstructed_normal_liver * (1 - tumor_mask_layer),
                                          image * (1 - tumor_mask_layer))
-        loss_recon_tumor = self.l1_loss(reconstructed_tumor, tumor_texture_layer)
+        loss_recon_tumor = self.l1_loss(reconstructed_tumor, target_tumor_normalized)
         loss_seg = self.dice_ce_loss(predicted_tumor_mask, label)
         loss_blend = torch.tensor(0.0, device=image.device)
-
         if self.use_l3_blend:
             pred_prob = torch.softmax(predicted_tumor_mask, dim=1)
             pred_tumor_prob = pred_prob[:, 2:3, :, :, :]
