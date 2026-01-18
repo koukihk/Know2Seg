@@ -1,0 +1,7 @@
+**/__pycache__
+**/.git
+**/dataset
+**/runs
+**/outs
+**/venv
+**/.idea 
